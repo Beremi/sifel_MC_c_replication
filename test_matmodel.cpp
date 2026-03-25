@@ -128,14 +128,19 @@ int main()
 
   for (size_t it=0; it<sizeof(tests)/sizeof(tests[0]); it++)
   {
+    vector strain;
+    vector eqstatev;
     vector stress;
     vector statev;
     vector eqnext;
-    matrix d, dnum, derr;
+    matrix d, d_cached, dnum, derr;
     double relerr;
 
-    compute_response(mm, tests[it].strain, eqother, stress, statev);
-    mm.stiffmat_from_statev(statev, d);
+    fill_vector4(tests[it].strain, strain);
+    fill_vector4(eqother, eqstatev);
+    mm.nlstresses(strain, eqstatev, stress, statev);
+    mm.stiffmat(strain, eqstatev, stress, d);
+    mm.stiffmat_from_statev(statev, d_cached);
     finite_difference_tangent(mm, tests[it].strain, eqother, dnum);
     diff44(d, dnum, derr);
     mm.updateval(statev, eqnext);
@@ -160,6 +165,16 @@ int main()
     {
       std::printf("  ERROR: tangent check failed.\n");
       ok = false;
+    }
+
+    {
+      matrix dcmp;
+      diff44(d, d_cached, dcmp);
+      if (norm44(dcmp) > 1.0e-12)
+      {
+        std::printf("  ERROR: stiffmat() did not reuse cached state consistently.\n");
+        ok = false;
+      }
     }
 
     for (long i=0; i<4; i++)

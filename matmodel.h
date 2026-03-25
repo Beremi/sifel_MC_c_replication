@@ -2,6 +2,7 @@
 #define MATMODEL_H
 
 #include <stdio.h>
+#include <string.h>
 
 struct XFILE;
 struct vector;
@@ -87,6 +88,14 @@ class matmodel
  protected:
   void write_tangent_to_matrix(const double a[4][4], matrix &d) const;
   void fill_response(const vector &strain, const vector &eqstatev, vector &stress, vector &statev) const;
+  void cache_response(const double strain[4], const double eqother[4], const double stress[4], const double statev[MATMODEL_NCOMP_OTHER]);
+  int cached_response_matches(const vector &strain, const vector &eqstatev, const vector &stress) const;
+
+  double cached_strain[MATMODEL_NCOMP_STRAIN];
+  double cached_eqother[MATMODEL_NCOMP_EQOTHER];
+  double cached_stress[MATMODEL_NCOMP_STRESS];
+  double cached_other[MATMODEL_NCOMP_OTHER];
+  long cached_response_valid;
 };
 
 inline long matmodel::give_num_of_statev() const

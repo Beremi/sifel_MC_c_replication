@@ -527,6 +527,11 @@ matmodel::matmodel()
 {
   init_params(&par, 0.0, 0.25, 0.0, 0.52359877559829887308);
   plane_strain_only = 1;
+  memset(cached_strain, 0, sizeof(cached_strain));
+  memset(cached_eqother, 0, sizeof(cached_eqother));
+  memset(cached_stress, 0, sizeof(cached_stress));
+  memset(cached_other, 0, sizeof(cached_other));
+  cached_response_valid = 0;
 }
 
 long matmodel::read(FILE *in)
@@ -571,6 +576,56 @@ void matmodel::write_tangent_to_matrix(const double a[4][4], matrix &d) const
   }
 }
 
+void matmodel::cache_response(const double strain[4],
+                              const double eqother[4],
+                              const double stress[4],
+                              const double statev[MATMODEL_NCOMP_OTHER])
+{
+  for (long i=0; i<MATMODEL_NCOMP_STRAIN; i++)
+    cached_strain[i] = strain[i];
+  for (long i=0; i<MATMODEL_NCOMP_EQOTHER; i++)
+    cached_eqother[i] = eqother[i];
+  for (long i=0; i<MATMODEL_NCOMP_STRESS; i++)
+    cached_stress[i] = stress[i];
+  for (long i=0; i<MATMODEL_NCOMP_OTHER; i++)
+    cached_other[i] = statev[i];
+  cached_response_valid = 1;
+}
+
+int matmodel::cached_response_matches(const vector &strain,
+                                      const vector &eqstatev,
+                                      const vector &stress) const
+{
+  const double tol = 1.0e-14;
+  double value = 0.0;
+
+  if (!cached_response_valid)
+    return 0;
+
+  for (long i=0; i<MATMODEL_NCOMP_STRAIN; i++)
+  {
+    value = (i < strain.n) ? strain[i] : 0.0;
+    if (fabs(value - cached_strain[i]) > tol)
+      return 0;
+  }
+
+  for (long i=0; i<MATMODEL_NCOMP_EQOTHER; i++)
+  {
+    value = (i < eqstatev.n) ? eqstatev[i] : 0.0;
+    if (fabs(value - cached_eqother[i]) > tol)
+      return 0;
+  }
+
+  for (long i=0; i<MATMODEL_NCOMP_STRESS; i++)
+  {
+    value = (i < stress.n) ? stress[i] : 0.0;
+    if (fabs(value - cached_stress[i]) > tol)
+      return 0;
+  }
+
+  return 1;
+}
+
 void matmodel::fill_response(const vector &strain,
                              const vector &eqstatev,
                              vector &stress,
@@ -596,6 +651,8 @@ void matmodel::fill_response(const vector &strain,
     stress[i] = cache.stress[i];
   for (long i=0; i<MATMODEL_NCOMP_OTHER; i++)
     statev[i] = other[i];
+
+  const_cast<matmodel *>(this)->cache_response(e, eqp, cache.stress, other);
 }
 
 void matmodel::nlstresses(const vector &strain,
@@ -627,9 +684,18 @@ void matmodel::stiffmat(const vector &strain,
 {
   vector statev;
   vector hstress;
-  (void)stress;
 
-  fill_response(strain, eqstatev, hstress, statev);
+  if (cached_response_matches(strain, eqstatev, stress))
+  {
+    reallocv(MATMODEL_NCOMP_OTHER, statev);
+    for (long i=0; i<MATMODEL_NCOMP_OTHER; i++)
+      statev[i] = cached_other[i];
+  }
+  else
+  {
+    fill_response(strain, eqstatev, hstress, statev);
+  }
+
   stiffmat_from_statev(statev, d);
 }
 
