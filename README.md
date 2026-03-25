@@ -27,8 +27,8 @@ Voigt ordering:
 
 The Matlab constitutive logic is split here the same way it is used by the SIFEL API:
 
-- `compute_response()` performs the return mapping and prepares all auxiliary quantities needed later by the tangent routine.
-- `compute_tangent()` assembles the consistent tangent from the data already prepared by the stress update.
+- `nlstresses()` performs the return mapping and packs the auxiliary data needed later by the tangent routine into `statev`.
+- `stiffmat()` reads the packed data and assembles the consistent tangent.
 
 The C++ rewrite uses the supplied SIFEL algebra layer directly for vector and matrix work. Generic operations are expressed with functions such as `copyv`, `rcopyv`, `nullv`, `addmultv`, `copym`, `nullm`, `addm`, `addmultm`, and `vxv`.
 
@@ -42,12 +42,11 @@ The key part of this rewrite is the layout of `statev` (`other`) and `eqstatev` 
 
 - the updated plastic strain for the current Newton iterate
 - the detected return type
-- the ordered trial principal strains
 - the eigenprojections
 - the Hessians of the ordered eigenvalues
 - the principal stresses
 
-This avoids recomputing the spectral decomposition and return classification when `stiffmat()` is called after `nlstresses()` for the same material point state.
+This avoids recomputing the spectral decomposition and return classification when `stiffmat()` is called after `nlstresses()` for the same material point state. Only data that are actually reused by the tangent routine are kept in `statev`.
 
 ### `eqstatev` layout
 
@@ -66,16 +65,15 @@ Size: `4`
 | --- | --- | --- | --- |
 | `0..3` | `epsp` | current plastic strain in Voigt order | no |
 | `4` | `return_type` | return mode stored as `double` | yes |
-| `5..7` | `eig(1:3)` | ordered trial principal strains | yes |
-| `8..11` | `proj_1` | first eigenprojection / first derivative of `eig_1` | yes |
-| `12..15` | `proj_2` | first eigenprojection / first derivative of `eig_2` | yes |
-| `16..19` | `proj_3` | first eigenprojection / first derivative of `eig_3` | yes |
-| `20..35` | `hess_1` | `4 x 4` Hessian of `eig_1`, flattened | yes |
-| `36..51` | `hess_2` | `4 x 4` Hessian of `eig_2`, flattened | yes |
-| `52..67` | `hess_3` | `4 x 4` Hessian of `eig_3`, flattened | yes |
-| `68..70` | `sigma(1:3)` | principal stresses after return mapping | yes |
+| `5..8` | `proj_1` | first eigenprojection / first derivative of `eig_1` | yes |
+| `9..12` | `proj_2` | first eigenprojection / first derivative of `eig_2` | yes |
+| `13..16` | `proj_3` | first eigenprojection / first derivative of `eig_3` | yes |
+| `17..32` | `hess_1` | `4 x 4` Hessian of `eig_1`, flattened | yes |
+| `33..48` | `hess_2` | `4 x 4` Hessian of `eig_2`, flattened | yes |
+| `49..64` | `hess_3` | `4 x 4` Hessian of `eig_3`, flattened | yes |
+| `65..67` | `sigma(1:3)` | principal stresses after return mapping | yes |
 
-Size: `71`
+Size: `68`
 
 ### Hessian storage
 

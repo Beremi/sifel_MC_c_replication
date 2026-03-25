@@ -3,9 +3,9 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "vector.h"
 
 struct XFILE;
-struct vector;
 struct matrix;
 
 enum
@@ -13,7 +13,7 @@ enum
   MATMODEL_NCOMP_STRAIN  = 4,
   MATMODEL_NCOMP_STRESS  = 4,
   MATMODEL_NCOMP_EQOTHER = 4,
-  MATMODEL_NCOMP_OTHER   = 71
+  MATMODEL_NCOMP_OTHER   = 68
 };
 
 enum matmodel_return_type
@@ -34,21 +34,17 @@ enum matmodel_other_index
 
   MATMODEL_IO_RETURN_TYPE = 4,
 
-  MATMODEL_IO_EIG_1 = 5,
-  MATMODEL_IO_EIG_2 = 6,
-  MATMODEL_IO_EIG_3 = 7,
+  MATMODEL_IO_PROJ_1 = 5,
+  MATMODEL_IO_PROJ_2 = 9,
+  MATMODEL_IO_PROJ_3 = 13,
 
-  MATMODEL_IO_PROJ_1 = 8,
-  MATMODEL_IO_PROJ_2 = 12,
-  MATMODEL_IO_PROJ_3 = 16,
+  MATMODEL_IO_HESS_1 = 17,
+  MATMODEL_IO_HESS_2 = 33,
+  MATMODEL_IO_HESS_3 = 49,
 
-  MATMODEL_IO_HESS_1 = 20,
-  MATMODEL_IO_HESS_2 = 36,
-  MATMODEL_IO_HESS_3 = 52,
-
-  MATMODEL_IO_SIGMA_1 = 68,
-  MATMODEL_IO_SIGMA_2 = 69,
-  MATMODEL_IO_SIGMA_3 = 70
+  MATMODEL_IO_SIGMA_1 = 65,
+  MATMODEL_IO_SIGMA_2 = 66,
+  MATMODEL_IO_SIGMA_3 = 67
 };
 
 struct matmodel_params
@@ -76,35 +72,21 @@ class matmodel
 
   void nlstresses(const vector &strain, const vector &eqstatev, vector &stress, vector &statev);
   void stiffmat(const vector &strain, const vector &eqstatev, const vector &stress, matrix &d);
-  void stiffmat_from_statev(const vector &statev, matrix &d);
   void updateval(const vector &statev, vector &eqstatev);
 
-  long give_num_of_statev() const;
-  long give_num_of_eqstatev() const;
-
- matmodel_params par;
-  long plane_strain_only;
+  matmodel_params par;
 
  protected:
-  void fill_response(const vector &strain, const vector &eqstatev, vector &stress, vector &statev) const;
-  void cache_response(const double strain[4], const double eqother[4], const double stress[4], const double statev[MATMODEL_NCOMP_OTHER]);
-  int cached_response_matches(const vector &strain, const vector &eqstatev, const vector &stress) const;
+  void fill_response(const vector &strain, const vector &eqstatev, vector &stress, vector &statev);
 
-  double cached_strain[MATMODEL_NCOMP_STRAIN];
-  double cached_eqother[MATMODEL_NCOMP_EQOTHER];
-  double cached_stress[MATMODEL_NCOMP_STRESS];
-  double cached_other[MATMODEL_NCOMP_OTHER];
+  vector cached_strain;
+  vector cached_eqother;
+  vector cached_other;
   long cached_response_valid;
+
+ private:
+  matmodel(const matmodel &) = delete;
+  matmodel &operator=(const matmodel &) = delete;
 };
-
-inline long matmodel::give_num_of_statev() const
-{
-  return MATMODEL_NCOMP_OTHER;
-}
-
-inline long matmodel::give_num_of_eqstatev() const
-{
-  return MATMODEL_NCOMP_EQOTHER;
-}
 
 #endif

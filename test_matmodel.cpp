@@ -133,14 +133,13 @@ int main()
     vector stress;
     vector statev;
     vector eqnext;
-    matrix d, d_cached, dnum, derr;
+    matrix d, d_uncached, dnum, derr;
     double relerr;
 
     fill_vector4(tests[it].strain, strain);
     fill_vector4(eqother, eqstatev);
     mm.nlstresses(strain, eqstatev, stress, statev);
     mm.stiffmat(strain, eqstatev, stress, d);
-    mm.stiffmat_from_statev(statev, d_cached);
     finite_difference_tangent(mm, tests[it].strain, eqother, dnum);
     diff44(d, dnum, derr);
     mm.updateval(statev, eqnext);
@@ -168,11 +167,18 @@ int main()
     }
 
     {
+      matmodel mm_uncached;
       matrix dcmp;
-      diff44(d, d_cached, dcmp);
+      if (read_params(mm_uncached) != 0)
+      {
+        std::printf("  ERROR: failed to initialize uncached material.\n");
+        ok = false;
+      }
+      mm_uncached.stiffmat(strain, eqstatev, stress, d_uncached);
+      diff44(d, d_uncached, dcmp);
       if (norm44(dcmp) > 1.0e-12)
       {
-        std::printf("  ERROR: stiffmat() did not reuse cached state consistently.\n");
+        std::printf("  ERROR: cached and uncached stiffmat() paths differ.\n");
         ok = false;
       }
     }
