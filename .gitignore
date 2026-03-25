@@ -1,0 +1,3 @@
+test_matmodel
+*.o
+replication_output/
