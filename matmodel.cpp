@@ -24,69 +24,6 @@ struct matmodel_cache
   double stress[MATMODEL_NCOMP_STRESS];
 };
 
-void zero4(double v[4])
-{
-  for (long i=0; i<4; i++)
-    v[i] = 0.0;
-}
-
-void zero44(double a[4][4])
-{
-  for (long i=0; i<4; i++)
-  {
-    for (long j=0; j<4; j++)
-      a[i][j] = 0.0;
-  }
-}
-
-void copy4(const double src[4], double dst[4])
-{
-  for (long i=0; i<4; i++)
-    dst[i] = src[i];
-}
-
-void copy44(const double src[4][4], double dst[4][4])
-{
-  for (long i=0; i<4; i++)
-  {
-    for (long j=0; j<4; j++)
-      dst[i][j] = src[i][j];
-  }
-}
-
-void add44(double dst[4][4], const double src[4][4], double scale)
-{
-  for (long i=0; i<4; i++)
-  {
-    for (long j=0; j<4; j++)
-      dst[i][j] += scale*src[i][j];
-  }
-}
-
-void add_outer4(double dst[4][4], const double a[4], const double b[4], double scale)
-{
-  for (long i=0; i<4; i++)
-  {
-    for (long j=0; j<4; j++)
-      dst[i][j] += scale*a[i]*b[j];
-  }
-}
-
-void sub_outer4(double dst[4][4], const double a[4], const double b[4], double scale)
-{
-  for (long i=0; i<4; i++)
-  {
-    for (long j=0; j<4; j++)
-      dst[i][j] -= scale*a[i]*b[j];
-  }
-}
-
-void add4(double dst[4], const double src[4], double scale)
-{
-  for (long i=0; i<4; i++)
-    dst[i] += scale*src[i];
-}
-
 void init_params(matmodel_params *par,
                  double young,
                  double poisson,
@@ -205,30 +142,31 @@ void copy_mode(double dst_proj[4],
                const double src_hess[4][4],
                double src_eig)
 {
-  copy4(src_proj, dst_proj);
-  copy44(src_hess, dst_hess);
+  copyv(src_proj, dst_proj, 4);
+  copyv(&src_hess[0][0], &dst_hess[0][0], 16);
   *dst_eig = src_eig;
 }
 
-void elastic_matrix(const matmodel_params *par, double d[4][4])
+void elastic_matrix(const matmodel_params *par, matrix &d)
 {
-  zero44(d);
+  reallocm(4, 4, d);
+  nullm(d);
   if (par == NULL)
     return;
 
-  d[0][0] = par->lame + 2.0*par->shear;
-  d[0][1] = par->lame;
-  d[0][3] = par->lame;
+  d(0,0) = par->lame + 2.0*par->shear;
+  d(0,1) = par->lame;
+  d(0,3) = par->lame;
 
-  d[1][0] = par->lame;
-  d[1][1] = par->lame + 2.0*par->shear;
-  d[1][3] = par->lame;
+  d(1,0) = par->lame;
+  d(1,1) = par->lame + 2.0*par->shear;
+  d(1,3) = par->lame;
 
-  d[2][2] = par->shear;
+  d(2,2) = par->shear;
 
-  d[3][0] = par->lame;
-  d[3][1] = par->lame;
-  d[3][3] = par->lame + 2.0*par->shear;
+  d(3,0) = par->lame;
+  d(3,1) = par->lame;
+  d(3,3) = par->lame + 2.0*par->shear;
 }
 
 void compute_response(const matmodel_params *par,
@@ -246,9 +184,9 @@ void compute_response(const matmodel_params *par,
     return;
 
   memset(cache, 0, sizeof(*cache));
-  zero4(epsp_prev);
+  nullv(epsp_prev, 4);
   if (eqother != NULL)
-    copy4(eqother, epsp_prev);
+    copyv(eqother, epsp_prev, 4);
 
   for (long i=0; i<4; i++)
     trial[i] = strain[i] - epsp_prev[i];
@@ -341,10 +279,20 @@ void compute_response(const matmodel_params *par,
     cache->sig_princ[2] = cache->sig_princ[0];
   }
 
-  zero4(cache->stress);
-  add4(cache->stress, cache->proj[0], cache->sig_princ[0]);
-  add4(cache->stress, cache->proj[1], cache->sig_princ[1]);
-  add4(cache->stress, cache->proj[2], cache->sig_princ[2]);
+  vector stress_v;
+  vector proj_v0;
+  vector proj_v1;
+  vector proj_v2;
+
+  stress_v.makerefv(MATMODEL_NCOMP_STRESS, cache->stress);
+  proj_v0.makerefv(MATMODEL_NCOMP_STRAIN, cache->proj[0]);
+  proj_v1.makerefv(MATMODEL_NCOMP_STRAIN, cache->proj[1]);
+  proj_v2.makerefv(MATMODEL_NCOMP_STRAIN, cache->proj[2]);
+
+  nullv(stress_v);
+  addmultv(stress_v, proj_v0, cache->sig_princ[0]);
+  addmultv(stress_v, proj_v1, cache->sig_princ[1]);
+  addmultv(stress_v, proj_v2, cache->sig_princ[2]);
 
   compliance_times_stress(par, cache->stress, eps_el);
   for (long i=0; i<4; i++)
@@ -353,16 +301,29 @@ void compute_response(const matmodel_params *par,
 
 void compute_tangent(const matmodel_params *par,
                      const matmodel_cache *cache,
-                     double d[4][4])
+                     matrix &d)
 {
-  static const double iota[4] = {1.0, 1.0, 0.0, 1.0};
   double denom_s, denom_l, denom_r;
-  double aux[4], proj12[4], proj23[4];
-  double hess12[4][4], hess23[4][4];
+  vector iota(4), aux(4), proj0(4), proj1(4), proj2(4), proj12(4), proj23(4);
+  matrix zero(4,4), outer(4,4), hess0(4,4), hess1(4,4), hess2(4,4), hess12(4,4), hess23(4,4);
 
-  zero44(d);
+  reallocm(4, 4, d);
+  nullm(d);
   if ((par == NULL) || (cache == NULL))
     return;
+
+  nullm(zero);
+  fillv(0.0, iota);
+  iota[0] = 1.0;
+  iota[1] = 1.0;
+  iota[3] = 1.0;
+
+  copyv(cache->proj[0], proj0);
+  copyv(cache->proj[1], proj1);
+  copyv(cache->proj[2], proj2);
+  copym(&cache->hess[0][0][0], hess0);
+  copym(&cache->hess[1][0][0], hess1);
+  copym(&cache->hess[2][0][0], hess2);
 
   denom_s = 4.0*par->lame*par->sin_phi*par->sin_phi
           + 2.0*par->shear*(1.0 + par->sin_phi)*(1.0 + par->sin_phi)
@@ -383,55 +344,58 @@ void compute_tangent(const matmodel_params *par,
       break;
 
     case MATMODEL_RETURN_SMOOTH:
-      add44(d, cache->hess[0], cache->sig_princ[0]);
-      add44(d, cache->hess[1], cache->sig_princ[1]);
-      add44(d, cache->hess[2], cache->sig_princ[2]);
-      add_outer4(d, iota, iota, par->lame);
-      add_outer4(d, cache->proj[0], cache->proj[0], 2.0*par->shear);
-      add_outer4(d, cache->proj[1], cache->proj[1], 2.0*par->shear);
-      add_outer4(d, cache->proj[2], cache->proj[2], 2.0*par->shear);
-      for (long i=0; i<4; i++)
-        aux[i] = 2.0*par->shear*((1.0 + par->sin_phi)*cache->proj[0][i] - (1.0 - par->sin_phi)*cache->proj[2][i])
-               + 2.0*par->lame*par->sin_phi*iota[i];
-      sub_outer4(d, aux, aux, 1.0/denom_s);
+      addmultm(zero, 0.0, hess0, cache->sig_princ[0], d);
+      addmultm(zero, 0.0, hess1, cache->sig_princ[1], d);
+      addmultm(zero, 0.0, hess2, cache->sig_princ[2], d);
+      vxv(iota, iota, outer);
+      addmultm(zero, 0.0, outer, par->lame, d);
+      vxv(proj0, proj0, outer);
+      addmultm(zero, 0.0, outer, 2.0*par->shear, d);
+      vxv(proj1, proj1, outer);
+      addmultm(zero, 0.0, outer, 2.0*par->shear, d);
+      vxv(proj2, proj2, outer);
+      addmultm(zero, 0.0, outer, 2.0*par->shear, d);
+      addmultv(proj0, 2.0*par->shear*(1.0 + par->sin_phi),
+               proj2, -2.0*par->shear*(1.0 - par->sin_phi), aux);
+      addmultv(aux, iota, 2.0*par->lame*par->sin_phi);
+      vxv(aux, aux, outer);
+      addmultm(zero, 0.0, outer, -1.0/denom_s, d);
       break;
 
     case MATMODEL_RETURN_LEFT_EDGE:
-      for (long i=0; i<4; i++)
-        proj12[i] = cache->proj[0][i] + cache->proj[1][i];
-      for (long i=0; i<4; i++)
-      {
-        for (long j=0; j<4; j++)
-          hess12[i][j] = cache->hess[0][i][j] + cache->hess[1][i][j];
-      }
-      add44(d, hess12, cache->sig_princ[0]);
-      add44(d, cache->hess[2], cache->sig_princ[2]);
-      add_outer4(d, iota, iota, par->lame);
-      add_outer4(d, proj12, proj12, par->shear);
-      add_outer4(d, cache->proj[2], cache->proj[2], 2.0*par->shear);
-      for (long i=0; i<4; i++)
-        aux[i] = par->shear*((1.0 + par->sin_phi)*proj12[i] - 2.0*(1.0 - par->sin_phi)*cache->proj[2][i])
-               + 2.0*par->lame*par->sin_phi*iota[i];
-      sub_outer4(d, aux, aux, 1.0/denom_l);
+      addmultv(proj0, 1.0, proj1, 1.0, proj12);
+      addm(hess0, hess1, hess12);
+      addmultm(zero, 0.0, hess12, cache->sig_princ[0], d);
+      addmultm(zero, 0.0, hess2, cache->sig_princ[2], d);
+      vxv(iota, iota, outer);
+      addmultm(zero, 0.0, outer, par->lame, d);
+      vxv(proj12, proj12, outer);
+      addmultm(zero, 0.0, outer, par->shear, d);
+      vxv(proj2, proj2, outer);
+      addmultm(zero, 0.0, outer, 2.0*par->shear, d);
+      addmultv(proj12, par->shear*(1.0 + par->sin_phi),
+               proj2, -2.0*par->shear*(1.0 - par->sin_phi), aux);
+      addmultv(aux, iota, 2.0*par->lame*par->sin_phi);
+      vxv(aux, aux, outer);
+      addmultm(zero, 0.0, outer, -1.0/denom_l, d);
       break;
 
     case MATMODEL_RETURN_RIGHT_EDGE:
-      for (long i=0; i<4; i++)
-        proj23[i] = cache->proj[1][i] + cache->proj[2][i];
-      for (long i=0; i<4; i++)
-      {
-        for (long j=0; j<4; j++)
-          hess23[i][j] = cache->hess[1][i][j] + cache->hess[2][i][j];
-      }
-      add44(d, cache->hess[0], cache->sig_princ[0]);
-      add44(d, hess23, cache->sig_princ[2]);
-      add_outer4(d, iota, iota, par->lame);
-      add_outer4(d, cache->proj[0], cache->proj[0], 2.0*par->shear);
-      add_outer4(d, proj23, proj23, par->shear);
-      for (long i=0; i<4; i++)
-        aux[i] = par->shear*(2.0*(1.0 + par->sin_phi)*cache->proj[0][i] - (1.0 - par->sin_phi)*proj23[i])
-               + 2.0*par->lame*par->sin_phi*iota[i];
-      sub_outer4(d, aux, aux, 1.0/denom_r);
+      addmultv(proj1, 1.0, proj2, 1.0, proj23);
+      addm(hess1, hess2, hess23);
+      addmultm(zero, 0.0, hess0, cache->sig_princ[0], d);
+      addmultm(zero, 0.0, hess23, cache->sig_princ[2], d);
+      vxv(iota, iota, outer);
+      addmultm(zero, 0.0, outer, par->lame, d);
+      vxv(proj0, proj0, outer);
+      addmultm(zero, 0.0, outer, 2.0*par->shear, d);
+      vxv(proj23, proj23, outer);
+      addmultm(zero, 0.0, outer, par->shear, d);
+      addmultv(proj0, 2.0*par->shear*(1.0 + par->sin_phi),
+               proj23, -par->shear*(1.0 - par->sin_phi), aux);
+      addmultv(aux, iota, 2.0*par->lame*par->sin_phi);
+      vxv(aux, aux, outer);
+      addmultm(zero, 0.0, outer, -1.0/denom_r, d);
       break;
 
     case MATMODEL_RETURN_APEX:
@@ -566,29 +530,15 @@ void matmodel::print(FILE *out)
   fprintf(out, "  buffer = epsp(4), return_type(1), eig(3), proj(12), hess(48), sigma_princ(3)\n");
 }
 
-void matmodel::write_tangent_to_matrix(const double a[4][4], matrix &d) const
-{
-  reallocm(4, 4, d);
-  for (long i=0; i<4; i++)
-  {
-    for (long j=0; j<4; j++)
-      d(i,j) = a[i][j];
-  }
-}
-
 void matmodel::cache_response(const double strain[4],
                               const double eqother[4],
                               const double stress[4],
                               const double statev[MATMODEL_NCOMP_OTHER])
 {
-  for (long i=0; i<MATMODEL_NCOMP_STRAIN; i++)
-    cached_strain[i] = strain[i];
-  for (long i=0; i<MATMODEL_NCOMP_EQOTHER; i++)
-    cached_eqother[i] = eqother[i];
-  for (long i=0; i<MATMODEL_NCOMP_STRESS; i++)
-    cached_stress[i] = stress[i];
-  for (long i=0; i<MATMODEL_NCOMP_OTHER; i++)
-    cached_other[i] = statev[i];
+  copyv(strain, cached_strain, MATMODEL_NCOMP_STRAIN);
+  copyv(eqother, cached_eqother, MATMODEL_NCOMP_EQOTHER);
+  copyv(stress, cached_stress, MATMODEL_NCOMP_STRESS);
+  copyv(statev, cached_other, MATMODEL_NCOMP_OTHER);
   cached_response_valid = 1;
 }
 
@@ -631,26 +581,30 @@ void matmodel::fill_response(const vector &strain,
                              vector &stress,
                              vector &statev) const
 {
+  const long nstrain = (strain.n < MATMODEL_NCOMP_STRAIN) ? strain.n : static_cast<long>(MATMODEL_NCOMP_STRAIN);
+  const long neqother = (eqstatev.n < MATMODEL_NCOMP_EQOTHER) ? eqstatev.n : static_cast<long>(MATMODEL_NCOMP_EQOTHER);
   double e[4] = {0.0, 0.0, 0.0, 0.0};
   double eqp[4] = {0.0, 0.0, 0.0, 0.0};
   double other[MATMODEL_NCOMP_OTHER];
   matmodel_cache cache;
+  vector e_v;
+  vector eqp_v;
 
   reallocv(MATMODEL_NCOMP_STRESS, stress);
   reallocv(MATMODEL_NCOMP_OTHER, statev);
+  e_v.makerefv(MATMODEL_NCOMP_STRAIN, e);
+  eqp_v.makerefv(MATMODEL_NCOMP_EQOTHER, eqp);
 
-  for (long i=0; (i<MATMODEL_NCOMP_STRAIN) && (i<strain.n); i++)
-    e[i] = strain[i];
-  for (long i=0; (i<MATMODEL_NCOMP_EQOTHER) && (i<eqstatev.n); i++)
-    eqp[i] = eqstatev[i];
+  if (nstrain > 0)
+    rcopyv(strain, 0, e_v, 0, nstrain);
+  if (neqother > 0)
+    rcopyv(eqstatev, 0, eqp_v, 0, neqother);
 
   compute_response(&par, e, eqp, &cache);
   pack_other(&cache, other);
 
-  for (long i=0; i<MATMODEL_NCOMP_STRESS; i++)
-    stress[i] = cache.stress[i];
-  for (long i=0; i<MATMODEL_NCOMP_OTHER; i++)
-    statev[i] = other[i];
+  copyv(cache.stress, stress);
+  copyv(other, statev);
 
   const_cast<matmodel *>(this)->cache_response(e, eqp, cache.stress, other);
 }
@@ -665,16 +619,18 @@ void matmodel::nlstresses(const vector &strain,
 
 void matmodel::stiffmat_from_statev(const vector &statev, matrix &d)
 {
-  double dd[4][4];
+  const long nstatev = (statev.n < MATMODEL_NCOMP_OTHER) ? statev.n : static_cast<long>(MATMODEL_NCOMP_OTHER);
   double other[MATMODEL_NCOMP_OTHER];
   matmodel_cache cache;
+  vector other_v;
 
-  for (long i=0; i<MATMODEL_NCOMP_OTHER; i++)
-    other[i] = (i < statev.n) ? statev[i] : 0.0;
+  nullv(other, MATMODEL_NCOMP_OTHER);
+  other_v.makerefv(MATMODEL_NCOMP_OTHER, other);
+  if (nstatev > 0)
+    rcopyv(statev, 0, other_v, 0, nstatev);
 
   unpack_other(other, &cache);
-  compute_tangent(&par, &cache, dd);
-  write_tangent_to_matrix(dd, d);
+  compute_tangent(&par, &cache, d);
 }
 
 void matmodel::stiffmat(const vector &strain,
@@ -688,8 +644,7 @@ void matmodel::stiffmat(const vector &strain,
   if (cached_response_matches(strain, eqstatev, stress))
   {
     reallocv(MATMODEL_NCOMP_OTHER, statev);
-    for (long i=0; i<MATMODEL_NCOMP_OTHER; i++)
-      statev[i] = cached_other[i];
+    copyv(cached_other, statev);
   }
   else
   {
@@ -701,7 +656,9 @@ void matmodel::stiffmat(const vector &strain,
 
 void matmodel::updateval(const vector &statev, vector &eqstatev)
 {
+  const long nstatev = (statev.n < MATMODEL_NCOMP_EQOTHER) ? statev.n : static_cast<long>(MATMODEL_NCOMP_EQOTHER);
   reallocv(MATMODEL_NCOMP_EQOTHER, eqstatev);
-  for (long i=0; i<MATMODEL_NCOMP_EQOTHER; i++)
-    eqstatev[i] = (i < statev.n) ? statev[i] : 0.0;
+  nullv(eqstatev);
+  if (nstatev > 0)
+    rcopyv(statev, 0, eqstatev, 0, nstatev);
 }

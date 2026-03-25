@@ -82,11 +82,10 @@ class matmodel
   long give_num_of_statev() const;
   long give_num_of_eqstatev() const;
 
-  matmodel_params par;
+ matmodel_params par;
   long plane_strain_only;
 
  protected:
-  void write_tangent_to_matrix(const double a[4][4], matrix &d) const;
   void fill_response(const vector &strain, const vector &eqstatev, vector &stress, vector &statev) const;
   void cache_response(const double strain[4], const double eqother[4], const double stress[4], const double statev[MATMODEL_NCOMP_OTHER]);
   int cached_response_matches(const vector &strain, const vector &eqstatev, const vector &stress) const;

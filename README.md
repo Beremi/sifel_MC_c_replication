@@ -1,187 +1,120 @@
-# Mohr-Coulomb Material Model for the SIFEL Template
+# Mohr-Coulomb Rewrite for the SIFEL API
 
-This repository contains a C++ rewrite of the 2D associative, perfectly plastic Mohr-Coulomb constitutive solver from the supplied Matlab code, adapted to the SIFEL-style `vector` and `matrix` framework that was sent in the email thread.
+This repository contains a C++ rewrite of the 2D associative, perfectly plastic Mohr-Coulomb constitutive model from the Matlab reference code. The target form is the SIFEL material-model API based on `vector` and `matrix`, with the constitutive update split into:
 
-The point of the rewrite was not just to "translate Matlab to C++". The real task was to fit the constitutive algorithm into the way SIFEL expects a material model to work:
+- stress computation `S`
+- consistent tangent computation `DS`
 
-- stress is computed in one procedure,
-- the stiffness matrix is computed in another procedure,
-- intermediate data can be stored in `other`,
-- converged history variables are stored in `eqother`,
-- `updateval()` transfers converged values at the end of the equilibrium step.
+The implementation is plane strain, small strain, associative, and perfectly plastic. It covers elastic response, return to the smooth yield surface, left edge, right edge, and apex.
 
-That design comes directly from Tomáš Koudelka's explanation in the emails. The main technical issue raised by Standa was that the Mohr-Coulomb tangent cannot be assembled efficiently from stress alone. The return type, ordered trial eigenvalues, eigenprojections, Hessians, and principal stresses are all needed again in the tangent routine. This repository therefore stores exactly those helper quantities in `other`, so the stiffness routine can reuse them instead of recomputing the whole spectral decomposition.
+## Interface
 
-## What is in the repository
+The public entry points are in [matmodel.h](/home/beremi/repos/sifel_MC_c_replication/matmodel.h) and implemented in [matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/matmodel.cpp):
 
-- `matmodel.h`, `matmodel.cpp`
-  The material model itself. This is now the main implementation.
-- `vector.h`, `vector.cpp`
-  The SIFEL-style vector implementation supplied by the author.
-- `matrix.h`, `matrix.cpp`
-  The matching SIFEL-style matrix implementation.
-- `test_matmodel.cpp`
-  A regression test written against the framework-level API.
-- `matlab_export/`
-  The original Matlab reference code, plus the export helper used during validation.
+- `nlstresses(strain, eqstatev, stress, statev)`
+  Computes the current stress vector `S` and fills the current-state buffer `statev`.
+- `stiffmat(strain, eqstatev, stress, d)`
+  Computes the consistent tangent matrix `DS`.
+- `updateval(statev, eqstatev)`
+  Transfers converged history variables to the equilibrium-state buffer.
 
-The old standalone kernel split has been removed. There is no separate "core" layer anymore. The constitutive logic now lives directly inside `matmodel.cpp`, because that is the form that is useful for the SIFEL template and closest to the workflow described in the emails.
-
-## Model implemented here
-
-The implementation covers:
-
-- 2D plane strain in 2D-in-3D Voigt ordering
-- associative flow rule
-- perfect plasticity
-- small strains
-- elastic response
-- return to smooth yield face
-- return to left edge
-- return to right edge
-- return to apex
-
-The component ordering is:
+Voigt ordering:
 
 - strain: `[eps_xx, eps_yy, gamma_xy, eps_zz]`
 - stress: `[sig_xx, sig_yy, tau_xy, sig_zz]`
 
-The tangent is assembled as a full `4 x 4` matrix for the same ordering.
+## Implementation Notes
 
-## How the Matlab code was translated
+The Matlab constitutive logic is split here the same way it is used by the SIFEL API:
 
-The Matlab side has two constitutive pieces:
+- `compute_response()` performs the return mapping and prepares all auxiliary quantities needed later by the tangent routine.
+- `compute_tangent()` assembles the consistent tangent from the data already prepared by the stress update.
 
-- `constitutive_problem.m`
-- `stiffness_matrix.m`
+The C++ rewrite uses the supplied SIFEL algebra layer directly for vector and matrix work. Generic operations are expressed with functions such as `copyv`, `rcopyv`, `nullv`, `addmultv`, `copym`, `nullm`, `addm`, `addmultm`, and `vxv`.
 
-The first routine computes the stress update and all spectral quantities needed by the algorithm. The second one uses those spectral quantities to assemble the consistent tangent.
+## State Data Passed From `S` to `DS`
 
-The C++ rewrite follows the same structure internally, but it is expressed in the idiom expected by the SIFEL template:
+The key part of this rewrite is the layout of `statev` (`other`) and `eqstatev` (`eqother`).
 
-1. Read the material parameters into the `matmodel` object.
-2. In `nlstresses()`, compute the trial strain from total strain minus plastic strain from `eqother`.
-3. Perform the same ordering of trial eigenvalues as in Matlab.
-4. Decide the return type.
-5. Compute principal stresses, full stress, and updated plastic strain.
-6. Pack all helper quantities into the current state buffer `statev`, which plays the role of SIFEL's `other`.
-7. In `stiffmat()`, reuse the already prepared `other`-like data instead of rebuilding it from scratch.
-8. In `updateval()`, copy the converged history variables into `eqother`.
+`eqstatev` stores only the converged history variables needed to start the next return mapping. In this model that is just the plastic strain from the last equilibrium step.
 
-The important point is that the conversion is not just algebraically equivalent. It follows the storage strategy proposed in the email thread so that the tangent routine has access to the same helper data that was already computed in the stress routine.
+`statev` stores:
 
-## `other` and `eqother`
+- the updated plastic strain for the current Newton iterate
+- the detected return type
+- the ordered trial principal strains
+- the eigenprojections
+- the Hessians of the ordered eigenvalues
+- the principal stresses
 
-This is the key design decision in the whole repository.
+This avoids recomputing the spectral decomposition and return classification when `stiffmat()` is called after `nlstresses()` for the same material point state.
 
-### `eqother`
+### `eqstatev` layout
 
-`eqother` stores only the quantities that need to survive between equilibrium steps. In this model that means the converged plastic strain:
+| Index | Symbol | Meaning |
+| ---: | --- | --- |
+| 0 | `epsp_xx` | plastic strain in `xx` |
+| 1 | `epsp_yy` | plastic strain in `yy` |
+| 2 | `gammap_xy` | plastic engineering shear strain |
+| 3 | `epsp_zz` | plastic strain in `zz` |
 
-| index | meaning |
-| ---: | --- |
-| 0 | `epsp_xx` |
-| 1 | `epsp_yy` |
-| 2 | `gammap_xy` |
-| 3 | `epsp_zz` |
+Size: `4`
 
-So:
+### `statev` layout
 
-- `ncompeqother = 4`
+| Index range | Symbol | Meaning | Used by `DS` |
+| --- | --- | --- | --- |
+| `0..3` | `epsp` | current plastic strain in Voigt order | no |
+| `4` | `return_type` | return mode stored as `double` | yes |
+| `5..7` | `eig(1:3)` | ordered trial principal strains | yes |
+| `8..11` | `proj_1` | first eigenprojection / first derivative of `eig_1` | yes |
+| `12..15` | `proj_2` | first eigenprojection / first derivative of `eig_2` | yes |
+| `16..19` | `proj_3` | first eigenprojection / first derivative of `eig_3` | yes |
+| `20..35` | `hess_1` | `4 x 4` Hessian of `eig_1`, flattened | yes |
+| `36..51` | `hess_2` | `4 x 4` Hessian of `eig_2`, flattened | yes |
+| `52..67` | `hess_3` | `4 x 4` Hessian of `eig_3`, flattened | yes |
+| `68..70` | `sigma(1:3)` | principal stresses after return mapping | yes |
 
-### `other`
+Size: `71`
 
-`other` stores the current Newton-step cache:
+### Hessian storage
 
-| range | meaning |
-| --- | --- |
-| `0..3` | current plastic strain |
-| `4` | return type stored as `double` |
-| `5..7` | ordered trial principal strains |
-| `8..19` | eigenprojections / first derivatives |
-| `20..67` | flattened `4 x 4` Hessians in column-major order |
-| `68..70` | principal stresses |
+Each Hessian is stored as a flattened `4 x 4` block. The packing order is the same one used in [matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/matmodel.cpp): the inner loop runs over row index `i`, the outer loop over column index `j`.
 
-So:
+That means the stored sequence is:
 
-- `ncompother = 71`
+`H(0,0), H(1,0), H(2,0), H(3,0), H(0,1), ..., H(3,3)`
 
-This layout is exactly the answer to the question raised in the emails: which intermediate quantities need to be passed from the stress procedure to the tangent procedure so that the tangent can be assembled without duplicated work.
+`stiffmat()` unpacks this layout back into a `4 x 4` matrix before tangent assembly.
 
-## How the current wrapper matches the email workflow
+## Control Flow
 
-The emails describe the real SIFEL situation: each material point owns its own `other` and `eqother`.
+For one material-point evaluation, the intended sequence is:
 
-In this standalone repository we do not have the full SIFEL material-point object, but the wrapper follows the same logic:
+1. `nlstresses()` computes `S` and fills `statev`.
+2. `stiffmat()` reuses the cached `statev` content to build `DS`.
+3. `updateval()` copies the converged plastic strain from `statev` to `eqstatev`.
 
-- `nlstresses()` computes stress and fills the current `statev` buffer
-- the same data are cached so that `stiffmat()` can reuse them
-- `stiffmat_from_statev()` assembles the tangent directly from the packed current-state buffer
-- `updateval()` copies the converged plastic strain from current state to equilibrium state
+If `stiffmat()` is called immediately after `nlstresses()` with the same inputs, the expensive return-mapping part is not recomputed.
 
-So the mechanism is the same as the one Tomáš described. In the real SIFEL integration, the cached current-state buffer would live in the integration point's `other` array. Here, the standalone wrapper emulates the same flow inside the template-level class.
+## Files
 
-## Files worth reading first
+- [matmodel.h](/home/beremi/repos/sifel_MC_c_replication/matmodel.h): public API, constants, state layout
+- [matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/matmodel.cpp): constitutive update and tangent assembly
+- [test_matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/test_matmodel.cpp): regression test
+- [matlab_export/](/home/beremi/repos/sifel_MC_c_replication/matlab_export): original Matlab reference implementation
+- [vector.h](/home/beremi/repos/sifel_MC_c_replication/vector.h), [vector.cpp](/home/beremi/repos/sifel_MC_c_replication/vector.cpp): supplied vector infrastructure
+- [matrix.h](/home/beremi/repos/sifel_MC_c_replication/matrix.h), [matrix.cpp](/home/beremi/repos/sifel_MC_c_replication/matrix.cpp): supplied matrix infrastructure
 
-If someone needs to understand the code quickly, the best order is:
-
-1. `matmodel.h`
-2. `matmodel.cpp`
-3. `test_matmodel.cpp`
-4. `matlab_export/constitutive_problem.m`
-5. `matlab_export/stiffness_matrix.m`
-
-`matmodel.h` shows the public contract and state layout. `matmodel.cpp` shows how the constitutive algorithm was rewritten. The Matlab files make it easy to verify that the algebra and branching logic were preserved.
-
-## Validation
-
-During the earlier replication work, the Matlab model and the C++ rewrite were checked against each other on the final state of the Matlab slope-stability example. The constitutive outputs matched to machine precision. The repository no longer keeps the generated export files, but the helper script remains in `matlab_export/export_loading_process_final.m` if the comparison needs to be repeated.
-
-For day-to-day checking, the repository includes a smaller regression test.
-
-Build:
+## Build and Test
 
 ```bash
 make
-```
-
-Run:
-
-```bash
 ./test_matmodel
 ```
 
-The test covers:
-
-- all five return modes,
-- stress computation,
-- transfer from current state to converged state,
-- consistency of `stiffmat()` with the cached current-state data,
-- analytical tangent versus finite differences.
-
-Expected final line:
+Expected result:
 
 ```text
 TEST STATUS: PASS
 ```
-
-## Notes on the framework files
-
-The `vector.cpp` and `matrix.cpp` sources are treated here as provided framework code. They compile and work for this repository, although the compiler may emit warnings inside those files. The Mohr-Coulomb rewrite was intentionally kept separate from any cleanup of the supplied algebra framework.
-
-## Limitations
-
-This repository implements only the first target discussed in the emails:
-
-- 2D
-- associative
-- perfectly plastic
-- plane strain
-
-It does not implement:
-
-- plane stress,
-- hardening or softening,
-- a full production SIFEL material-point class with `ipp / im / ido` arguments.
-
-What it does provide is the constitutive logic, the state-variable strategy, and the framework-level wrapper in the exact shape needed to move into the real SIFEL codebase with minimal rewriting.
