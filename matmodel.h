@@ -8,91 +8,91 @@ struct XFILE;
 struct vector;
 struct matrix;
 
-enum
+class matmodel
 {
-  // Plane-strain Voigt layout used both by the Matlab prototype and by this rewrite:
-  // [xx, yy, xy, zz] for strains and [xx, yy, xy, zz] for stresses.
-  MATMODEL_NCOMP_STRAIN  = 4,
-  MATMODEL_NCOMP_STRESS  = 4,
+ public:
+  enum
+  {
+    // Plane-strain Voigt layout used both by the Matlab prototype and by this rewrite:
+    // [xx, yy, xy, zz] for strains and [xx, yy, xy, zz] for stresses.
+    NCOMP_STRAIN  = 4,
+    NCOMP_STRESS  = 4,
 
-  // The point buffer stores the current plastic strain plus the auxiliary quantities
-  // that Matlab passes from constitutive_problem.m to stiffness_matrix.m.
-  MATMODEL_NCOMP_OTHER   = 50,
+    // Current-iteration point buffer:
+    // epsp(4), epsp_prev(4), return_type(1)
+    NCOMP_OTHER   = 9,
 
-  // eqstatev and statev share the same per-point packed layout.
-  MATMODEL_NCOMP_EQOTHER = MATMODEL_NCOMP_OTHER
-};
+    // Converged point buffer:
+    // epsp(4)
+    NCOMP_EQOTHER = 4
+  };
 
-enum matmodel_return_type
-{
-  MATMODEL_RETURN_ELASTIC    = 0,
-  MATMODEL_RETURN_SMOOTH     = 1,
-  MATMODEL_RETURN_LEFT_EDGE  = 2,
-  MATMODEL_RETURN_RIGHT_EDGE = 3,
-  MATMODEL_RETURN_APEX       = 4
-};
+  enum return_type_code
+  {
+    RET_ELASTIC    = 0,
+    RET_SMOOTH     = 1,
+    RET_LEFT_EDGE  = 2,
+    RET_RIGHT_EDGE = 3,
+    RET_APEX       = 4
+  };
 
-enum matmodel_other_index
-{
-  // Current plastic strain epsp in Voigt order.
-  MATMODEL_IO_EP_XX = 0,
-  MATMODEL_IO_EP_YY = 1,
-  MATMODEL_IO_GP_XY = 2,
-  MATMODEL_IO_EP_ZZ = 3,
+  enum other_offset
+  {
+    // Numeric offsets in the packed point arrays statev / eqstatev.
+    // Current plastic strain epsp in Voigt order.
+    O_EP_XX = 0,
+    O_EP_YY = 1,
+    O_GP_XY = 2,
+    O_EP_ZZ = 3,
 
-  // Return type stored as double so it can travel through the generic state array.
-  MATMODEL_IO_RETURN_TYPE = 4,
+    // Previous plastic strain copied from eqstatev for tangent recomputation.
+    O_EP_PREV_XX = 4,
+    O_EP_PREV_YY = 5,
+    O_GP_PREV_XY = 6,
+    O_EP_PREV_ZZ = 7,
 
-  // Ordered trial eigenvalues eig_1, eig_2, eig_3.
-  MATMODEL_IO_EIG_1 = 5,
-  MATMODEL_IO_EIG_2 = 6,
-  MATMODEL_IO_EIG_3 = 7,
+    // Return type stored as double so it can travel through the generic state array.
+    O_RET = 8
+  };
 
-  // First derivatives of the ordered trial eigenvalues. These correspond to the Matlab
-  // arrays Eig_1, Eig_2, Eig_3 returned by constitutive_problem.m.
-  MATMODEL_IO_PROJ_1 = 8,
-  MATMODEL_IO_PROJ_2 = 12,
-  MATMODEL_IO_PROJ_3 = 16,
+  long read(FILE *in);
+  void print(FILE *out);
 
-  // Second derivatives of the ordered trial eigenvalues. Matlab stores these as the
-  // reduced 9-component arrays EIG_1..EIG_3 in column-major order:
-  // [11,21,31,12,22,32,13,23,33].
-  MATMODEL_IO_HESS_1 = 20,
-  MATMODEL_IO_HESS_2 = 29,
-  MATMODEL_IO_HESS_3 = 38,
+  void nlstresses(const vector &strain, const vector &eqstatev, vector &stress, vector &statev);
+  void stiffmat(const vector &strain, const vector &statev, const vector &stress, matrix &d);
+  void updateval(const vector &statev, vector &eqstatev);
 
-  // Ordered principal stresses sigma_1, sigma_2, sigma_3 after return mapping.
-  MATMODEL_IO_SIGMA_1 = 47,
-  MATMODEL_IO_SIGMA_2 = 48,
-  MATMODEL_IO_SIGMA_3 = 49
-};
-
-struct matmodel_params
-{
+  // Material parameters and precomputed constants for the return mapping.
   double young;
   double poisson;
   double c;
   double phi;
-
   double shear;
   double bulk;
   double lame;
   double sin_phi;
   double cos_phi;
   double c_bar;
-};
 
-class matmodel
-{
- public:
-  long read(FILE *in);
-  void print(FILE *out);
-
-  void nlstresses(const vector &strain, const vector &eqstatev, vector &stress, vector &statev);
-  void stiffmat(const vector &strain, const vector &eqstatev, const vector &stress, matrix &d);
-
-  // data members represent material parameters and stress return algorithm setup
-  matmodel_params par;
+ protected:
+  void compute_ordered_trial_spectral(const vector &E_trial,
+                                      vector &eig,
+                                      vector &Eig_1,
+                                      vector &Eig_2,
+                                      vector &Eig_3,
+                                      matrix &EIG_1,
+                                      matrix &EIG_2,
+                                      matrix &EIG_3) const;
+  void compute_return_denominators(double &denom_s,
+                                   double &denom_l,
+                                   double &denom_r) const;
+  void compute_returned_principal_stresses(const vector &eig,
+                                           double trace_E,
+                                           int return_type,
+                                           double lambda_s,
+                                           double lambda_l,
+                                           double lambda_r,
+                                           vector &sigma) const;
 };
 
 #endif
