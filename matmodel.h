@@ -3,17 +3,24 @@
 
 #include <stdio.h>
 #include <string.h>
-#include "vector.h"
 
 struct XFILE;
+struct vector;
 struct matrix;
 
 enum
 {
+  // Plane-strain Voigt layout used both by the Matlab prototype and by this rewrite:
+  // [xx, yy, xy, zz] for strains and [xx, yy, xy, zz] for stresses.
   MATMODEL_NCOMP_STRAIN  = 4,
   MATMODEL_NCOMP_STRESS  = 4,
-  MATMODEL_NCOMP_EQOTHER = 4,
-  MATMODEL_NCOMP_OTHER   = 68
+
+  // The point buffer stores the current plastic strain plus the auxiliary quantities
+  // that Matlab passes from constitutive_problem.m to stiffness_matrix.m.
+  MATMODEL_NCOMP_OTHER   = 50,
+
+  // eqstatev and statev share the same per-point packed layout.
+  MATMODEL_NCOMP_EQOTHER = MATMODEL_NCOMP_OTHER
 };
 
 enum matmodel_return_type
@@ -27,24 +34,37 @@ enum matmodel_return_type
 
 enum matmodel_other_index
 {
+  // Current plastic strain epsp in Voigt order.
   MATMODEL_IO_EP_XX = 0,
   MATMODEL_IO_EP_YY = 1,
   MATMODEL_IO_GP_XY = 2,
   MATMODEL_IO_EP_ZZ = 3,
 
+  // Return type stored as double so it can travel through the generic state array.
   MATMODEL_IO_RETURN_TYPE = 4,
 
-  MATMODEL_IO_PROJ_1 = 5,
-  MATMODEL_IO_PROJ_2 = 9,
-  MATMODEL_IO_PROJ_3 = 13,
+  // Ordered trial eigenvalues eig_1, eig_2, eig_3.
+  MATMODEL_IO_EIG_1 = 5,
+  MATMODEL_IO_EIG_2 = 6,
+  MATMODEL_IO_EIG_3 = 7,
 
-  MATMODEL_IO_HESS_1 = 17,
-  MATMODEL_IO_HESS_2 = 33,
-  MATMODEL_IO_HESS_3 = 49,
+  // First derivatives of the ordered trial eigenvalues. These correspond to the Matlab
+  // arrays Eig_1, Eig_2, Eig_3 returned by constitutive_problem.m.
+  MATMODEL_IO_PROJ_1 = 8,
+  MATMODEL_IO_PROJ_2 = 12,
+  MATMODEL_IO_PROJ_3 = 16,
 
-  MATMODEL_IO_SIGMA_1 = 65,
-  MATMODEL_IO_SIGMA_2 = 66,
-  MATMODEL_IO_SIGMA_3 = 67
+  // Second derivatives of the ordered trial eigenvalues. Matlab stores these as the
+  // reduced 9-component arrays EIG_1..EIG_3 in column-major order:
+  // [11,21,31,12,22,32,13,23,33].
+  MATMODEL_IO_HESS_1 = 20,
+  MATMODEL_IO_HESS_2 = 29,
+  MATMODEL_IO_HESS_3 = 38,
+
+  // Ordered principal stresses sigma_1, sigma_2, sigma_3 after return mapping.
+  MATMODEL_IO_SIGMA_1 = 47,
+  MATMODEL_IO_SIGMA_2 = 48,
+  MATMODEL_IO_SIGMA_3 = 49
 };
 
 struct matmodel_params
@@ -65,28 +85,14 @@ struct matmodel_params
 class matmodel
 {
  public:
-  matmodel();
-
   long read(FILE *in);
   void print(FILE *out);
 
   void nlstresses(const vector &strain, const vector &eqstatev, vector &stress, vector &statev);
   void stiffmat(const vector &strain, const vector &eqstatev, const vector &stress, matrix &d);
-  void updateval(const vector &statev, vector &eqstatev);
 
+  // data members represent material parameters and stress return algorithm setup
   matmodel_params par;
-
- protected:
-  void fill_response(const vector &strain, const vector &eqstatev, vector &stress, vector &statev);
-
-  vector cached_strain;
-  vector cached_eqother;
-  vector cached_other;
-  long cached_response_valid;
-
- private:
-  matmodel(const matmodel &) = delete;
-  matmodel &operator=(const matmodel &) = delete;
 };
 
 #endif

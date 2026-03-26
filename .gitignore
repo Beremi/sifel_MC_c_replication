@@ -1,3 +1,4 @@
 test_matmodel
+compare_matlab_export
 *.o
 replication_output/

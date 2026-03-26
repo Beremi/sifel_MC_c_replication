@@ -25,6 +25,14 @@ void fill_vector4(const double src[4], vector &dst)
     dst[i] = src[i];
 }
 
+void fill_state_buffer(const double history[4], vector &dst)
+{
+  reallocv(MATMODEL_NCOMP_EQOTHER, dst);
+  nullv(dst);
+  for (long i=0; i<4; i++)
+    dst[i] = history[i];
+}
+
 double norm44(const matrix &a)
 {
   double s = 0.0;
@@ -56,7 +64,7 @@ void compute_response(matmodel &mm,
   vector eqstatev;
 
   fill_vector4(strain_data, strain);
-  fill_vector4(eq_data, eqstatev);
+  fill_state_buffer(eq_data, eqstatev);
   mm.nlstresses(strain, eqstatev, stress, statev);
 }
 
@@ -132,17 +140,16 @@ int main()
     vector eqstatev;
     vector stress;
     vector statev;
-    vector eqnext;
-    matrix d, d_uncached, dnum, derr;
+    matrix d, dnum, derr;
     double relerr;
 
     fill_vector4(tests[it].strain, strain);
-    fill_vector4(eqother, eqstatev);
+    fill_state_buffer(eqother, eqstatev);
     mm.nlstresses(strain, eqstatev, stress, statev);
+    copyv(statev, eqstatev);
     mm.stiffmat(strain, eqstatev, stress, d);
     finite_difference_tangent(mm, tests[it].strain, eqother, dnum);
     diff44(d, dnum, derr);
-    mm.updateval(statev, eqnext);
 
     relerr = norm44(derr)/(norm44(dnum) + 1.0e-14);
 
@@ -154,9 +161,38 @@ int main()
                 statev[0], statev[1], statev[2], statev[3]);
     std::printf("  D rel. err. : %.6e\n", relerr);
 
+    if (statev.n != MATMODEL_NCOMP_OTHER)
+    {
+      std::printf("  ERROR: unexpected statev size.\n");
+      ok = false;
+    }
+
     if (static_cast<int>(statev[MATMODEL_IO_RETURN_TYPE] + 0.5) != tests[it].expected_return)
     {
       std::printf("  ERROR: unexpected return type.\n");
+      ok = false;
+    }
+
+    if ((statev[MATMODEL_IO_EIG_1] + 1.0e-12 < statev[MATMODEL_IO_EIG_2]) ||
+        (statev[MATMODEL_IO_EIG_2] + 1.0e-12 < statev[MATMODEL_IO_EIG_3]))
+    {
+      std::printf("  ERROR: ordered trial eigenvalues are not sorted.\n");
+      ok = false;
+    }
+
+    if (std::fabs(statev[MATMODEL_IO_HESS_1 + 1] - statev[MATMODEL_IO_HESS_1 + 3]) > 1.0e-10 ||
+        std::fabs(statev[MATMODEL_IO_HESS_1 + 2] - statev[MATMODEL_IO_HESS_1 + 6]) > 1.0e-10 ||
+        std::fabs(statev[MATMODEL_IO_HESS_1 + 5] - statev[MATMODEL_IO_HESS_1 + 7]) > 1.0e-10)
+    {
+      std::printf("  ERROR: reduced Hessian packing is inconsistent.\n");
+      ok = false;
+    }
+
+    if (std::fabs(eqstatev[MATMODEL_IO_SIGMA_1] - statev[MATMODEL_IO_SIGMA_1]) > 1.0e-12 ||
+        std::fabs(eqstatev[MATMODEL_IO_SIGMA_2] - statev[MATMODEL_IO_SIGMA_2]) > 1.0e-12 ||
+        std::fabs(eqstatev[MATMODEL_IO_SIGMA_3] - statev[MATMODEL_IO_SIGMA_3]) > 1.0e-12)
+    {
+      std::printf("  ERROR: statev -> eqstatev copy mismatch.\n");
       ok = false;
     }
 
@@ -164,32 +200,6 @@ int main()
     {
       std::printf("  ERROR: tangent check failed.\n");
       ok = false;
-    }
-
-    {
-      matmodel mm_uncached;
-      matrix dcmp;
-      if (read_params(mm_uncached) != 0)
-      {
-        std::printf("  ERROR: failed to initialize uncached material.\n");
-        ok = false;
-      }
-      mm_uncached.stiffmat(strain, eqstatev, stress, d_uncached);
-      diff44(d, d_uncached, dcmp);
-      if (norm44(dcmp) > 1.0e-12)
-      {
-        std::printf("  ERROR: cached and uncached stiffmat() paths differ.\n");
-        ok = false;
-      }
-    }
-
-    for (long i=0; i<4; i++)
-    {
-      if (std::fabs(eqnext[i] - statev[i]) > 1.0e-14)
-      {
-        std::printf("  ERROR: updateval failed at epsp[%ld].\n", i);
-        ok = false;
-      }
     }
 
     std::printf("\n");

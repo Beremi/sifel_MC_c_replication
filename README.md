@@ -1,118 +1,88 @@
 # Mohr-Coulomb Rewrite for the SIFEL API
 
-This repository contains a C++ rewrite of the 2D associative, perfectly plastic Mohr-Coulomb constitutive model from the Matlab reference code. The target form is the SIFEL material-model API based on `vector` and `matrix`, with the constitutive update split into:
+This repository contains a C++ rewrite of the 2D associative, perfectly plastic Mohr-Coulomb model from the Matlab reference implementation in [matlab_export/](/home/beremi/repos/sifel_MC_c_replication/matlab_export). The target form is the SIFEL material-model API based on the supplied `vector` and `matrix` classes.
 
-- stress computation `S`
-- consistent tangent computation `DS`
+The key point of the rewrite is the split between:
 
-The implementation is plane strain, small strain, associative, and perfectly plastic. It covers elastic response, return to the smooth yield surface, left edge, right edge, and apex.
+- `nlstresses()` for the stress update `S`
+- `stiffmat()` for the consistent tangent `DS`
+
+The Matlab code passes auxiliary constitutive data from `constitutive_problem.m` to `stiffness_matrix.m`. In this rewrite, that same payload is packed into one per-point buffer slice and later read back by `stiffmat()`.
 
 ## Interface
 
-The public entry points are in [matmodel.h](/home/beremi/repos/sifel_MC_c_replication/matmodel.h) and implemented in [matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/matmodel.cpp):
+The public API is defined in [matmodel.h](/home/beremi/repos/sifel_MC_c_replication/matmodel.h) and implemented in [matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/matmodel.cpp):
 
 - `nlstresses(strain, eqstatev, stress, statev)`
-  Computes the current stress vector `S` and fills the current-state buffer `statev`.
 - `stiffmat(strain, eqstatev, stress, d)`
-  Computes the consistent tangent matrix `DS`.
-- `updateval(statev, eqstatev)`
-  Transfers converged history variables to the equilibrium-state buffer.
 
 Voigt ordering:
 
 - strain: `[eps_xx, eps_yy, gamma_xy, eps_zz]`
 - stress: `[sig_xx, sig_yy, tau_xy, sig_zz]`
 
-## Implementation Notes
+The external API remains 4-component plane strain. For the Matlab export comparison, the `zz` input strain is set to zero because the Matlab constitutive routine receives only the in-plane strain components.
 
-The Matlab constitutive logic is split here the same way it is used by the SIFEL API:
+## Per-Point Buffer
 
-- `nlstresses()` performs the return mapping and packs the auxiliary data needed later by the tangent routine into `statev`.
-- `stiffmat()` reads the packed data and assembles the consistent tangent.
+`statev` and `eqstatev` use the same packed layout. The intended call sequence is:
 
-The C++ rewrite uses the supplied SIFEL algebra layer directly for vector and matrix work. Generic operations are expressed with functions such as `copyv`, `rcopyv`, `nullv`, `addmultv`, `copym`, `nullm`, `addm`, `addmultm`, and `vxv`.
+1. `nlstresses()` reads the plastic-strain history from the first 4 entries of `eqstatev`.
+2. `nlstresses()` writes the full current-point payload into `statev`.
+3. The caller copies that point slice to `eqstatev`.
+4. `stiffmat()` reads the packed data from `eqstatev` and assembles `DS` without recomputing the return map.
 
-## State Data Passed From `S` to `DS`
+Buffer layout:
 
-The key part of this rewrite is the layout of `statev` (`other`) and `eqstatev` (`eqother`).
+| Range | Count | Meaning |
+| --- | ---: | --- |
+| `0..3` | 4 | current plastic strain `epsp` |
+| `4` | 1 | `return_type` stored as `double` |
+| `5..7` | 3 | ordered trial eigenvalues `eig_1..3` |
+| `8..11` | 4 | `Eig_1` |
+| `12..15` | 4 | `Eig_2` |
+| `16..19` | 4 | `Eig_3` |
+| `20..28` | 9 | reduced `EIG_1` |
+| `29..37` | 9 | reduced `EIG_2` |
+| `38..46` | 9 | reduced `EIG_3` |
+| `47..49` | 3 | principal stresses `sigma_1..3` |
 
-`eqstatev` stores only the converged history variables needed to start the next return mapping. In this model that is just the plastic strain from the last equilibrium step.
+Total size: `50`
 
-`statev` stores:
+The reduced Hessians are stored in the same order as Matlab:
 
-- the updated plastic strain for the current Newton iterate
-- the detected return type
-- the eigenprojections
-- the Hessians of the ordered eigenvalues
-- the principal stresses
+`[11, 21, 31, 12, 22, 32, 13, 23, 33]`
 
-This avoids recomputing the spectral decomposition and return classification when `stiffmat()` is called after `nlstresses()` for the same material point state. Only data that are actually reused by the tangent routine are kept in `statev`.
+Inside `stiffmat()`, these `3 x 3` blocks are expanded to the in-plane part of the `4 x 4` SIFEL matrix form, with the `zz` row and column left at zero.
 
-### `eqstatev` layout
+## Matlab Mapping
 
-| Index | Symbol | Meaning |
-| ---: | --- | --- |
-| 0 | `epsp_xx` | plastic strain in `xx` |
-| 1 | `epsp_yy` | plastic strain in `yy` |
-| 2 | `gammap_xy` | plastic engineering shear strain |
-| 3 | `epsp_zz` | plastic strain in `zz` |
+The constitutive formulas in [matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/matmodel.cpp) follow:
 
-Size: `4`
+- [constitutive_problem.m](/home/beremi/repos/sifel_MC_c_replication/matlab_export/constitutive_problem.m) for trial strain, eigenvalue ordering, return classification, principal stresses, and stress reconstruction
+- [stiffness_matrix.m](/home/beremi/repos/sifel_MC_c_replication/matlab_export/stiffness_matrix.m) for the elastic, smooth, edge, and apex tangent formulas
 
-### `statev` layout
+The C++ code keeps the SIFEL API shape, but the data handed from `S` to `DS` is the same payload Matlab passes between those two routines.
 
-| Index range | Symbol | Meaning | Used by `DS` |
-| --- | --- | --- | --- |
-| `0..3` | `epsp` | current plastic strain in Voigt order | no |
-| `4` | `return_type` | return mode stored as `double` | yes |
-| `5..8` | `proj_1` | first eigenprojection / first derivative of `eig_1` | yes |
-| `9..12` | `proj_2` | first eigenprojection / first derivative of `eig_2` | yes |
-| `13..16` | `proj_3` | first eigenprojection / first derivative of `eig_3` | yes |
-| `17..32` | `hess_1` | `4 x 4` Hessian of `eig_1`, flattened | yes |
-| `33..48` | `hess_2` | `4 x 4` Hessian of `eig_2`, flattened | yes |
-| `49..64` | `hess_3` | `4 x 4` Hessian of `eig_3`, flattened | yes |
-| `65..67` | `sigma(1:3)` | principal stresses after return mapping | yes |
+## Verification
 
-Size: `68`
+Two checks are included:
 
-### Hessian storage
+- [test_matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/test_matmodel.cpp) runs finite-difference tangent checks for elastic, smooth, left-edge, right-edge, and apex returns using the packed-buffer call sequence.
+- [compare_matlab_export.cpp](/home/beremi/repos/sifel_MC_c_replication/compare_matlab_export.cpp) reads the snapshot generated by [export_loading_process_final.m](/home/beremi/repos/sifel_MC_c_replication/matlab_export/export_loading_process_final.m) and compares the C++ packed buffer against Matlab exports of `eig`, `proj`, reduced `hess`, `sigma`, stress, and reduced tangent.
 
-Each Hessian is stored as a flattened `4 x 4` block. The packing order is the same one used in [matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/matmodel.cpp): the inner loop runs over row index `i`, the outer loop over column index `j`.
-
-That means the stored sequence is:
-
-`H(0,0), H(1,0), H(2,0), H(3,0), H(0,1), ..., H(3,3)`
-
-`stiffmat()` unpacks this layout back into a `4 x 4` matrix before tangent assembly.
-
-## Control Flow
-
-For one material-point evaluation, the intended sequence is:
-
-1. `nlstresses()` computes `S` and fills `statev`.
-2. `stiffmat()` reuses the cached `statev` content to build `DS`.
-3. `updateval()` copies the converged plastic strain from `statev` to `eqstatev`.
-
-If `stiffmat()` is called immediately after `nlstresses()` with the same inputs, the expensive return-mapping part is not recomputed.
-
-## Files
-
-- [matmodel.h](/home/beremi/repos/sifel_MC_c_replication/matmodel.h): public API, constants, state layout
-- [matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/matmodel.cpp): constitutive update and tangent assembly
-- [test_matmodel.cpp](/home/beremi/repos/sifel_MC_c_replication/test_matmodel.cpp): regression test
-- [matlab_export/](/home/beremi/repos/sifel_MC_c_replication/matlab_export): original Matlab reference implementation
-- [vector.h](/home/beremi/repos/sifel_MC_c_replication/vector.h), [vector.cpp](/home/beremi/repos/sifel_MC_c_replication/vector.cpp): supplied vector infrastructure
-- [matrix.h](/home/beremi/repos/sifel_MC_c_replication/matrix.h), [matrix.cpp](/home/beremi/repos/sifel_MC_c_replication/matrix.cpp): supplied matrix infrastructure
-
-## Build and Test
+Build and run:
 
 ```bash
 make
 ./test_matmodel
+matlab -batch "cd('matlab_export'); export_loading_process_final; exit"
+./compare_matlab_export
 ```
 
-Expected result:
+Expected results:
 
 ```text
 TEST STATUS: PASS
+COMPARE STATUS: PASS
 ```
