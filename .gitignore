@@ -1,5 +1,8 @@
 compare_matlab_export
+compare_matlab_export_3d
 test_mohrc_ugn
+test_mohrc3d_ugn
 *.o
 replication_output/
+replication_output_3d/
 mail_communications/
