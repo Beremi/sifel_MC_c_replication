@@ -1,4 +1,5 @@
-#include "matmodel.h"
+#include "iotools.h"
+#include "mohrc_ugn.h"
 #include "vector.h"
 #include "matrix.h"
 
@@ -27,7 +28,7 @@ void fill_vector4(const double src[4], vector &dst)
 
 void fill_state_buffer(const double history[4], vector &dst)
 {
-  reallocv(matmodel::NCOMP_EQOTHER, dst);
+  reallocv(mohrc_ugn::NCOMP_EQOTHER, dst);
   nullv(dst);
   for (long i=0; i<4; i++)
     dst[i] = history[i];
@@ -54,7 +55,7 @@ void diff44(const matrix &a, const matrix &b, matrix &out)
   }
 }
 
-void compute_response(matmodel &mm,
+void compute_response(mohrc_ugn &mm,
                       const double strain_data[4],
                       const double eq_data[4],
                       vector &stress,
@@ -68,7 +69,7 @@ void compute_response(matmodel &mm,
   mm.nlstresses(strain, eqstatev, stress, statev);
 }
 
-void finite_difference_tangent(matmodel &mm,
+void finite_difference_tangent(mohrc_ugn &mm,
                                const double strain[4],
                                const double eqother[4],
                                matrix &dnum)
@@ -98,7 +99,7 @@ void finite_difference_tangent(matmodel &mm,
   }
 }
 
-int read_params(matmodel &mm)
+int read_params(mohrc_ugn &mm)
 {
   FILE *in = tmpfile();
   if (in == NULL)
@@ -107,7 +108,8 @@ int read_params(matmodel &mm)
   std::fprintf(in, "%.17g %.17g %.17g %.17g\n",
                20000.0, 0.49, 50.0, M_PI/9.0);
   std::rewind(in);
-  const long ret = mm.read(in);
+  XFILE xin = {in};
+  const long ret = mm.read(&xin);
   std::fclose(in);
   return static_cast<int>(ret);
 }
@@ -116,7 +118,7 @@ int read_params(matmodel &mm)
 
 int main()
 {
-  matmodel mm;
+  mohrc_ugn mm;
   if (read_params(mm) != 0)
   {
     std::fprintf(stderr, "Invalid material parameters.\n");
@@ -124,11 +126,11 @@ int main()
   }
 
   const TestCase tests[] = {
-    {"elastic",    { 1.0e-5,  0.0,    0.0,   0.0  }, matmodel::RET_ELASTIC},
-    {"smooth",     {-5.0e-3,  0.0,    0.0,   5.0e-3}, matmodel::RET_SMOOTH},
-    {"left_edge",  {-5.0e-3,  5.0e-3, 0.0,   5.0e-3}, matmodel::RET_LEFT_EDGE},
-    {"right_edge", {-5.0e-3, -5.0e-3, 0.0,   1.0e-2}, matmodel::RET_RIGHT_EDGE},
-    {"apex",       { 0.0,     0.0,    0.0,   5.0e-3}, matmodel::RET_APEX}
+    {"elastic",    { 1.0e-5,  0.0,    0.0,   0.0  }, mohrc_ugn::RET_ELASTIC},
+    {"smooth",     {-5.0e-3,  0.0,    0.0,   5.0e-3}, mohrc_ugn::RET_SMOOTH},
+    {"left_edge",  {-5.0e-3,  5.0e-3, 0.0,   5.0e-3}, mohrc_ugn::RET_LEFT_EDGE},
+    {"right_edge", {-5.0e-3, -5.0e-3, 0.0,   1.0e-2}, mohrc_ugn::RET_RIGHT_EDGE},
+    {"apex",       { 0.0,     0.0,    0.0,   5.0e-3}, mohrc_ugn::RET_APEX}
   };
 
   const double eqother[4] = {0.0, 0.0, 0.0, 0.0};
@@ -141,7 +143,6 @@ int main()
     vector stress;
     vector statev;
     matrix d, dnum, derr;
-    double relerr;
 
     fill_vector4(tests[it].strain, strain);
     fill_state_buffer(eqother, eqstatev);
@@ -151,23 +152,23 @@ int main()
     finite_difference_tangent(mm, tests[it].strain, eqother, dnum);
     diff44(d, dnum, derr);
 
-    relerr = norm44(derr)/(norm44(dnum) + 1.0e-14);
+    const double relerr = norm44(derr)/(norm44(dnum) + 1.0e-14);
 
     std::printf("[%s]\n", tests[it].name);
-    std::printf("  return type : %.0f\n", statev[matmodel::O_RET]);
+    std::printf("  return type : %.0f\n", statev[mohrc_ugn::O_RET]);
     std::printf("  stress      : [% .10e, % .10e, % .10e, % .10e]\n",
                 stress[0], stress[1], stress[2], stress[3]);
     std::printf("  eps_p       : [% .10e, % .10e, % .10e, % .10e]\n",
                 statev[0], statev[1], statev[2], statev[3]);
     std::printf("  D rel. err. : %.6e\n", relerr);
 
-    if (statev.n != matmodel::NCOMP_OTHER)
+    if (statev.n != mohrc_ugn::NCOMP_OTHER)
     {
       std::printf("  ERROR: unexpected statev size.\n");
       ok = false;
     }
 
-    if (static_cast<int>(statev[matmodel::O_RET] + 0.5) != tests[it].expected_return)
+    if (static_cast<int>(statev[mohrc_ugn::O_RET] + 0.5) != tests[it].expected_return)
     {
       std::printf("  ERROR: unexpected return type.\n");
       ok = false;
@@ -175,7 +176,7 @@ int main()
 
     for (long i=0; i<4; i++)
     {
-      if (std::fabs(statev[matmodel::O_EP_PREV_XX + i] - eqother[i]) > 1.0e-12)
+      if (std::fabs(statev[mohrc_ugn::O_EP_PREV_XX + i] - eqother[i]) > 1.0e-12)
       {
         std::printf("  ERROR: previous plastic strain was not copied to statev.\n");
         ok = false;
@@ -183,7 +184,7 @@ int main()
       }
     }
 
-    for (long i=0; i<matmodel::NCOMP_EQOTHER; i++)
+    for (long i=0; i<mohrc_ugn::NCOMP_EQOTHER; i++)
     {
       if (std::fabs(eqstatev[i] - statev[i]) > 1.0e-12)
       {
@@ -204,10 +205,10 @@ int main()
 
   if (!ok)
   {
-    std::printf("TEST STATUS: FAIL\n");
+    std::printf("MOHRC_UGN TEST STATUS: FAIL\n");
     return 1;
   }
 
-  std::printf("TEST STATUS: PASS\n");
+  std::printf("MOHRC_UGN TEST STATUS: PASS\n");
   return 0;
 }

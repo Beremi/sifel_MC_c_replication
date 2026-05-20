@@ -1,13 +1,13 @@
 CXX ?= g++
 CXXFLAGS ?= -O2 -std=c++11 -Wall -Wextra -pedantic
 
-all: test_matmodel compare_matlab_export
+all: test_mohrc_ugn compare_matlab_export
 
-test_matmodel: matmodel.cpp matmodel.h matrix.cpp matrix.h vector.cpp vector.h test_matmodel.cpp
-	$(CXX) $(CXXFLAGS) vector.cpp matrix.cpp matmodel.cpp test_matmodel.cpp -o $@
+test_mohrc_ugn: mohrc_ugn.cpp mohrc_ugn.h iotools.h global.h mechmat.h sifel_compat.cpp matrix.cpp matrix.h vector.cpp vector.h test_mohrc_ugn.cpp
+	$(CXX) $(CXXFLAGS) vector.cpp matrix.cpp sifel_compat.cpp mohrc_ugn.cpp test_mohrc_ugn.cpp -o $@
 
-compare_matlab_export: matmodel.cpp matmodel.h matrix.cpp matrix.h vector.cpp vector.h compare_matlab_export.cpp
-	$(CXX) $(CXXFLAGS) vector.cpp matrix.cpp matmodel.cpp compare_matlab_export.cpp -o $@
+compare_matlab_export: mohrc_ugn.cpp mohrc_ugn.h iotools.h global.h mechmat.h sifel_compat.cpp matrix.cpp matrix.h vector.cpp vector.h compare_matlab_export.cpp
+	$(CXX) $(CXXFLAGS) vector.cpp matrix.cpp sifel_compat.cpp mohrc_ugn.cpp compare_matlab_export.cpp -o $@
 
 clean:
-	rm -f test_matmodel compare_matlab_export *.o
+	rm -f test_mohrc_ugn compare_matlab_export *.o

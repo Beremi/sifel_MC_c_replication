@@ -1,4 +1,5 @@
-#include "matmodel.h"
+#include "iotools.h"
+#include "mohrc_ugn.h"
 #include "vector.h"
 #include "matrix.h"
 
@@ -71,7 +72,7 @@ static int read_ascii_values(const char *path, long count, std::vector<double> &
   return 0;
 }
 
-static int read_params(matmodel &mm, const ExportMeta &meta)
+static int read_params(mohrc_ugn &mm, const ExportMeta &meta)
 {
   FILE *in = std::tmpfile();
 
@@ -81,7 +82,8 @@ static int read_params(matmodel &mm, const ExportMeta &meta)
   std::fprintf(in, "%.17g %.17g %.17g %.17g\n",
                meta.young, meta.poisson, meta.cohesion, meta.phi);
   std::rewind(in);
-  const long ret = mm.read(in);
+  XFILE xin = {in};
+  const long ret = mm.read(&xin);
   std::fclose(in);
   return static_cast<int>(ret);
 }
@@ -91,7 +93,7 @@ static void fill_eqstatev_from_ep_prev(const std::vector<double> &ep_prev,
                                        long ip,
                                        vector &buf)
 {
-  reallocv(matmodel::NCOMP_EQOTHER, buf);
+  reallocv(mohrc_ugn::NCOMP_EQOTHER, buf);
   nullv(buf);
   for (long i=0; i<4; i++)
     buf[i] = ep_prev[i*nt + ip];
@@ -102,7 +104,7 @@ static void fill_strain_from_matlab(const std::vector<double> &E_final,
                                     long ip,
                                     vector &strain)
 {
-  reallocv(matmodel::NCOMP_STRAIN, strain);
+  reallocv(mohrc_ugn::NCOMP_STRAIN, strain);
   nullv(strain);
   strain[0] = E_final[ip];
   strain[1] = E_final[nt + ip];
@@ -134,7 +136,7 @@ int main(int argc, char **argv)
   std::vector<double> S_matlab;
   std::vector<double> return_type_matlab;
   std::vector<double> Sderiv_matlab;
-  matmodel mm;
+  mohrc_ugn mm;
   vector strain;
   vector eqstatev;
   vector statev;
@@ -184,14 +186,14 @@ int main(int argc, char **argv)
     {
       max_epsp_diff = update_max_abs(max_epsp_diff, statev[i], Ep_final_matlab[i*meta.nt + ip]);
       max_epsp_prev_copy_diff = update_max_abs(max_epsp_prev_copy_diff,
-                                               statev[matmodel::O_EP_PREV_XX + i],
+                                               statev[mohrc_ugn::O_EP_PREV_XX + i],
                                                Ep_prev[i*meta.nt + ip]);
       max_stress_diff = update_max_abs(max_stress_diff, stress[i], S_matlab[i*meta.nt + ip]);
       max_update_copy_diff = update_max_abs(max_update_copy_diff, eqstatev_new[i], statev[i]);
     }
 
     max_return_diff = update_max_abs(max_return_diff,
-                                     statev[matmodel::O_RET],
+                                     statev[mohrc_ugn::O_RET],
                                      return_type_matlab[ip]);
 
     for (long j=0; j<3; j++)

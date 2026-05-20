@@ -1,5 +1,6 @@
-#ifndef MATMODEL_H
-#define MATMODEL_H
+#ifndef MOHRC_UGN_H
+#define MOHRC_UGN_H
+
 
 #include <stdio.h>
 #include <string.h>
@@ -8,7 +9,7 @@ struct XFILE;
 struct vector;
 struct matrix;
 
-class matmodel
+class mohrc_ugn
 {
  public:
   enum
@@ -55,12 +56,26 @@ class matmodel
     O_RET = 8
   };
 
-  long read(FILE *in);
+  /// function reads material parameters from a text file
+  long read(XFILE *in);
+  /// function prints material parameters to the output file
   void print(FILE *out);
-
+  /// the function computes the stresses of the given nonlinear material model at required integration (material) point ipp
+  void nlstresses(long ipp, long ido);
+  /// computes stresses at the given integration point from the nonlocal strain values
+  void nonloc_nlstresses (long ipp,long ido);
+  /// the function computes the stresses for the given set of quantities (strains, stresses and state variables)
   void nlstresses(const vector &strain, const vector &eqstatev, vector &stress, vector &statev);
+  /// the function computes the material stiffness matrix for the given set of quantities (strains, stresses and state variables)
   void stiffmat(const vector &strain, const vector &statev, const vector &stress, matrix &d);
+  /// the function computes the material stiffness matrix at the given integration (material) point ipp
+  void matstiff(matrix &d, long ipp, long ido);
+  /// the function updates equilibrium state variables with the selected attained state variables
   void updateval(const vector &statev, vector &eqstatev);
+  /// the function updates equilibrium state variables at the given integration (material) point
+  void updateval(long ipp, long im, long ido);
+  /// return actual values of the plastic strains
+  void giveirrstrains (long ipp, long ido, vector &epsp);
 
   // Material parameters and precomputed constants for the return mapping.
   double young;
