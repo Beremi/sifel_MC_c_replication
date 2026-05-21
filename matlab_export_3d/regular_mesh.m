@@ -1,5 +1,5 @@
 
-function [coord,elem,surf,Q]=regular_mesh_3d(N_h,x1,x2,x3,y1,y2,z)
+function [coord,elem,surf,Q]=regular_mesh(N_h,x1,x2,x3,y1,y2,z)
 
 % =========================================================================
 %

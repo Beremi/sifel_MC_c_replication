@@ -24,6 +24,8 @@ function export_loading_process_final(outdir, require_all_branches)
   result = loading_process;
   last_success = result.last_success;
   response = last_success.response;
+  Ep_prev_sifel = upstream_to_sifel_rows(last_success.Ep_prev);
+  Ep_final_sifel = upstream_to_sifel_rows(last_success.Ep_final);
 
   if ~any(response.return_type > 0)
     error('The final 3D full-path export has no plastic integration points.');
@@ -33,6 +35,7 @@ function export_loading_process_final(outdir, require_all_branches)
   metadata.nt = nint;
   metadata.nv = nv;
   metadata.nelem = nt;
+  metadata.n_q = 1;
   metadata.nstrain = nstrain;
   metadata.accepted_steps = last_success.accepted_steps;
   metadata.final_printed_step = last_success.printed_step;
@@ -59,6 +62,7 @@ function export_loading_process_final(outdir, require_all_branches)
   metadata.y2 = y2;
   metadata.z = z;
   metadata.N_h = N_h;
+  metadata.elem_type_code = 1;
   metadata.tolerance = tolerance;
   metadata.it_max = it_max;
   metadata.step_max = step_max;
@@ -106,8 +110,8 @@ function export_loading_process_final(outdir, require_all_branches)
   write_ascii_matrix(fullfile(matlab_dir, 'return_type_count_hist.txt'), result.return_type_count_hist);
 
   write_ascii_matrix(fullfile(matlab_dir, 'U_final.txt'), last_success.U);
-  write_ascii_matrix(fullfile(matlab_dir, 'Ep_prev.txt'), last_success.Ep_prev);
-  write_ascii_matrix(fullfile(matlab_dir, 'Ep_final_matlab.txt'), last_success.Ep_final);
+  write_ascii_matrix(fullfile(matlab_dir, 'Ep_prev.txt'), Ep_prev_sifel);
+  write_ascii_matrix(fullfile(matlab_dir, 'Ep_final_matlab.txt'), Ep_final_sifel);
   write_ascii_matrix(fullfile(matlab_dir, 'E_final.txt'), response.E_sifel);
   write_ascii_matrix(fullfile(matlab_dir, 'S_matlab.txt'), response.S_sifel);
   write_ascii_matrix(fullfile(matlab_dir, 'DS_matlab.txt'), response.DS_sifel);
@@ -117,6 +121,13 @@ function export_loading_process_final(outdir, require_all_branches)
   write_ascii_matrix(fullfile(matlab_dir, 'plastic_mask.txt'), double(response.return_type > 0));
   write_ascii_matrix(fullfile(matlab_dir, 'plastic_strain_norm.txt'), sqrt(sum(last_success.Ep_final.^2, 1)));
 
+  clear global coord elem surf Dir WEIGHT volume EU F1 K_elast iMALI jMALI
+
+end
+
+function A_sifel = upstream_to_sifel_rows(A_upstream)
+  upstream_to_sifel = [1, 2, 3, 5, 6, 4];
+  A_sifel = A_upstream(upstream_to_sifel, :);
 end
 
 function criteria = mc_surface_coverage(sigma_values, return_type, sin_phi, c_bar)

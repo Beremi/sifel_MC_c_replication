@@ -15,7 +15,8 @@
 
 namespace {
 
-const int SIFEL_TO_INTERNAL[6] = {0, 1, 2, 5, 4, 3};
+const int SIFEL_TO_INTERNAL[6] = {0, 1, 2, 5, 3, 4};
+const int INTERNAL_TO_SIFEL[6] = {0, 1, 2, 4, 5, 3};
 const double IDENT_DIAG[6] = {1.0, 1.0, 1.0, 0.5, 0.5, 0.5};
 const double IOTA[6] = {1.0, 1.0, 1.0, 0.0, 0.0, 0.0};
 
@@ -92,7 +93,7 @@ void array_sifel_to_internal(const double sifel[6], double internal[6])
 void array_internal_to_sifel(const double internal[6], double sifel[6])
 {
   for (int i=0; i<6; i++)
-    sifel[i] = internal[SIFEL_TO_INTERNAL[i]];
+    sifel[i] = internal[INTERNAL_TO_SIFEL[i]];
 }
 
 void matrix_internal_to_sifel(const double internal[6][6], matrix &sifel)
@@ -101,7 +102,7 @@ void matrix_internal_to_sifel(const double internal[6][6], matrix &sifel)
   for (int i=0; i<6; i++)
   {
     for (int j=0; j<6; j++)
-      sifel(i,j) = internal[SIFEL_TO_INTERNAL[i]][SIFEL_TO_INTERNAL[j]];
+      sifel(i,j) = internal[INTERNAL_TO_SIFEL[i]][INTERNAL_TO_SIFEL[j]];
   }
 }
 

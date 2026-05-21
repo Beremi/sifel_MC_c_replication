@@ -8,10 +8,9 @@ function export_branch_catalog_final(outdir)
   ensure_directory(outdir);
   ensure_directory(matlab_dir);
 
-  young = 20000;
-  poisson = 0.49;
-  cohesion = 50;
-  phi = pi / 9;
+  global young poisson cohesion phi
+  global shear bulk lame c_bar sin_phi
+  input_data;
 
   E_final = [
      1.0e-5, -5.0e-3, -5.0e-3, -5.0e-3,  0.0
@@ -23,8 +22,13 @@ function export_branch_catalog_final(outdir)
   ];
   Ep_prev = zeros(6, size(E_final, 2));
 
-  [S, DS, return_type, Ep_final, eig_values, sigma_values] = ...
-    constitutive_problem_3d(E_final, Ep_prev, young, poisson, cohesion, phi);
+  E_upstream = sifel_to_upstream_rows(E_final);
+  Ep_prev_upstream = sifel_to_upstream_rows(Ep_prev);
+  [S_upstream, DS_upstream, return_type, Ep_final_upstream, eig_values, sigma_values] = ...
+    constitutive_problem(E_upstream, Ep_prev_upstream);
+  S = upstream_to_sifel_rows(S_upstream);
+  DS = upstream_to_sifel_tangent(DS_upstream);
+  Ep_final = upstream_to_sifel_rows(Ep_final_upstream);
 
   expected_return_type = [0, 1, 2, 3, 4];
   if ~isequal(return_type, expected_return_type)
@@ -38,12 +42,13 @@ function export_branch_catalog_final(outdir)
   metadata.poisson = poisson;
   metadata.cohesion = cohesion;
   metadata.phi = phi;
-  metadata.shear = young / (2 * (1 + poisson));
-  metadata.bulk = young / (3 * (1 - 2 * poisson));
-  metadata.lame = metadata.bulk - 2 * metadata.shear / 3;
-  metadata.c_bar = 2 * cohesion * cos(phi);
-  metadata.sin_phi = sin(phi);
-  metadata.ordering = 3;
+  metadata.shear = shear;
+  metadata.bulk = bulk;
+  metadata.lame = lame;
+  metadata.c_bar = c_bar;
+  metadata.sin_phi = sin_phi;
+  metadata.sifel_ordering_code = 3;
+  metadata.upstream_ordering_code = 4;
 
   write_metadata(fullfile(outdir, 'meta.txt'), metadata);
   write_ascii_matrix(fullfile(matlab_dir, 'E_final.txt'), E_final);
@@ -59,6 +64,23 @@ function export_branch_catalog_final(outdir)
        'metadata', 'E_final', 'Ep_prev', 'Ep_final', 'S', 'DS', ...
        'return_type', 'eig_values', 'sigma_values');
 
+end
+
+function A_upstream = sifel_to_upstream_rows(A_sifel)
+  sifel_to_upstream = [1, 2, 3, 6, 4, 5];
+  A_upstream = A_sifel(sifel_to_upstream, :);
+end
+
+function A_sifel = upstream_to_sifel_rows(A_upstream)
+  upstream_to_sifel = [1, 2, 3, 5, 6, 4];
+  A_sifel = A_upstream(upstream_to_sifel, :);
+end
+
+function DS_sifel = upstream_to_sifel_tangent(DS_upstream)
+  upstream_to_sifel = [1, 2, 3, 5, 6, 4];
+  D_upstream = reshape(DS_upstream, 6, 6, []);
+  D_sifel = D_upstream(upstream_to_sifel, upstream_to_sifel, :);
+  DS_sifel = reshape(D_sifel, 36, []);
 end
 
 function ensure_directory(path)

@@ -1,98 +1,112 @@
-function [U, Ep, iter1, last_response] = newton(U_init, Ep_init, F_ext)
+% ************************************************************************
+%
+%  newton  -  an algorithm of the semismooth Newton method
+%
+% ************************************************************************
+%
 
-  global young poisson cohesion phi
-  global B WEIGHT Dir K_elast iD jD vD_weight
-  global nint nstrain
-  global tolerance it_max settle_max
+function [U,        ... % 3*nv displacement vector
+          Ep,       ... % 6*nt plastic strains on elements
+          iter1,    ... % number of iteration
+          last_response ...
+          ] = newton(U_init, ...  % 3*nv initial displacement vector
+                     Ep_init, ... % 6*nt initial plastic strain
+                     F_ext ...    % 3*nv load vector
+                    )
 
-  U = U_init;
-  dU = zeros(size(U));
-  iter1 = 0;
+  global  volume EU Dir nt nv iMALI jMALI K_elast
+  global  tolerance it_max settle_max     % parameters of the Newton method
+%
+%==========================================================================
 
-  [E_sifel, S_sifel, DS_sifel, return_type, Ep, eig_values, sigma_values] = ...
-    evaluate_material(U, Ep_init);
+% auxilliary notation
+  volume6 = ones(6,1)*volume;
+  volume36 = ones(36,1)*volume;
 
+% initialization
+  U = U_init;        % displacement vector
+  E = zeros(6,nt);
+  E(:) = EU*U(:);   % strain on elements
+  [S,DS,return_type,Ep,eig_values,sigma_values] = constitutive_problem(E,Ep_init);
+  Sderiv = stiffness_matrix(DS);
+  F_int = zeros(3,nv);  % vector of internal forces
+  dU = zeros(3,nv);     % Newton's increment (in displacement)
+
+% Newton iterations
+  it=0;              % iteration number
   while true
-    iter1 = iter1 + 1;
 
-    if iter1 >= it_max
-      warning('Maximal number of Newton iterations was achieved.');
-      break
-    end
+      % test on number of iteration
+      it=it+1;
+      if  it >= it_max
+          warning('Maximal number of Newton iteration was achieved.')
+          break
+      end
 
-    S_internal = sifel_to_internal_rows(S_sifel);
-    DS_internal = sifel_to_internal_tangent(DS_sifel);
+      % consistent tangent stiffness matrix
+      hMALI = volume36.*Sderiv;
+      MALI = sparse( iMALI(:),jMALI(:),hMALI(:) , 6*nt,6*nt );
+      K_tangent = EU'*MALI*EU;
+      K_tangent = (K_tangent'+K_tangent)/2;
 
-    F_int = B' * reshape(repmat(WEIGHT, nstrain, 1) .* S_internal, [], 1);
-    F_int = reshape(F_int, 3, []);
+      % vector of internal forces
+      F_int(:) = EU'*reshape( volume6.*S , [],1 );
 
-    vD = vD_weight .* DS_internal;
-    D_p = sparse(iD(:), jD(:), vD(:), nstrain*nint, nstrain*nint);
-    K_tangent = B' * D_p * B;
-    K_tangent = (K_tangent + K_tangent') / 2;
+      % Newton's increment
+      dU(:) = 0;
+      dU(Dir) = K_tangent(Dir,Dir)\(F_ext(Dir)-F_int(Dir));
 
-    residual = F_ext - F_int;
-    dU(:) = 0;
-    dU(Dir) = K_tangent(Dir, Dir) \ residual(Dir);
+      % next iteration
+      U_new = U + dU;
 
-    U_new = U + dU;
+      % stopping criterion
+      q1 = sqrt( abs(dU(:)'*K_elast*dU(:)) );
+      q2 = sqrt( abs(  U(:)'*K_elast*U(:)  ) );
+      q3 = sqrt( abs( U_new(:)'*K_elast*U_new(:) ) );
+      criterion = q1/(q2+q3+eps);
 
-    q1 = sqrt(abs(dU(:)' * K_elast * dU(:)));
-    q2 = sqrt(abs(U(:)' * K_elast * U(:)));
-    q3 = sqrt(abs(U_new(:)' * K_elast * U_new(:)));
-    criterion = q1 / (q2 + q3 + eps);
+      % update of unknown arrays
+      U=U_new;
+      E(:) = EU*U(:);
+      [S,DS,return_type,Ep,eig_values,sigma_values] = constitutive_problem(E,Ep_init);
+      Sderiv = stiffness_matrix(DS);
 
-    U = U_new;
-    [E_sifel, S_sifel, DS_sifel, return_type, Ep, eig_values, sigma_values] = ...
-      evaluate_material(U, Ep_init);
+      % test on the stopping criterion
+      if  criterion < tolerance
+          break
+      end
 
-    if criterion < tolerance
-      break
-    end
+      if max(abs(U(:)))>2*settle_max
+           warning('Too large displacement in the Newton solver.')
+           it=it_max;
+           break
+      end
 
-    if max(abs(U(:))) > 2 * settle_max
-      warning('Too large displacement in the Newton solver.');
-      iter1 = it_max;
-      break
-    end
-  end
+  end%  true
+
+  iter1=it;
 
   last_response = struct();
-  last_response.E_sifel = E_sifel;
-  last_response.S_sifel = S_sifel;
-  last_response.DS_sifel = DS_sifel;
+  last_response.E = E;
+  last_response.S = S;
+  last_response.DS = DS;
+  last_response.E_sifel = upstream_to_sifel_rows(E);
+  last_response.S_sifel = upstream_to_sifel_rows(S);
+  last_response.DS_sifel = upstream_to_sifel_tangent(DS);
   last_response.return_type = return_type;
   last_response.eig_values = eig_values;
   last_response.sigma_values = sigma_values;
 
 end
 
-function [E_sifel, S_sifel, DS_sifel, return_type, Ep, eig_values, sigma_values] = evaluate_material(U, Ep_prev)
-
-  global young poisson cohesion phi B nint nstrain
-
-  perm = [1, 2, 3, 6, 5, 4];
-  E_internal = reshape(B * U(:), nstrain, nint);
-  E_sifel = E_internal(perm, :);
-
-  [S_sifel, DS_sifel, return_type, Ep, eig_values, sigma_values] = ...
-    constitutive_problem_3d(E_sifel, Ep_prev, young, poisson, cohesion, phi);
-
+function A_sifel = upstream_to_sifel_rows(A_upstream)
+  upstream_to_sifel = [1, 2, 3, 5, 6, 4];
+  A_sifel = A_upstream(upstream_to_sifel, :);
 end
 
-function A_internal = sifel_to_internal_rows(A_sifel)
-  perm = [1, 2, 3, 6, 5, 4];
-  A_internal = A_sifel(perm, :);
-end
-
-function DS_internal = sifel_to_internal_tangent(DS_sifel)
-  perm = [1, 2, 3, 6, 5, 4];
-  nt = size(DS_sifel, 2);
-  DS_internal = zeros(size(DS_sifel));
-
-  for ip = 1:nt
-    D_sifel = reshape(DS_sifel(:, ip), 6, 6);
-    D_internal = D_sifel(perm, perm);
-    DS_internal(:, ip) = D_internal(:);
-  end
+function DS_sifel = upstream_to_sifel_tangent(DS_upstream)
+  upstream_to_sifel = [1, 2, 3, 5, 6, 4];
+  D_upstream = reshape(DS_upstream, 6, 6, []);
+  D_sifel = D_upstream(upstream_to_sifel, upstream_to_sifel, :);
+  DS_sifel = reshape(D_sifel, 36, []);
 end
