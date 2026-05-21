@@ -4,483 +4,277 @@
 %                            Mohr-Coulomb problem
 %
 % ************************************************************************
+%
 
-function [S,        ... % stress tensor 6*nt
-          DS,       ... % consistent tangent stiffness matrix 36*nt
-          return_type, ...
-          Ep,       ... % plastic strain 6*nt
-          eig_values, ...
-          sigma_values] ...
-            =       ...
+function [S,...                       % stress tensor 6*nt
+          eig_1,eig_2,eig_3,...       % ordered eigenvalues of the trial strain 1*nt
+          Eig_1,Eig_2,Eig_3,...       % 1st derivatives ot the eigenvalues 6*nt
+          EIG_1,EIG_2,EIG_3,...       % 2nd derivatives ot the eigenvalues 36*nt
+          sigma_1,sigma_2,sigma_3,... % ordered principle stresses 1*nt
+          return_type]...             % return type used by the export tests
+            =        ... %
   constitutive_problem ( ...
-            E_new,  ... % 6*nt current strain tensor, upstream ordering
-            Ep_prev ... % 6*nt plastic strain from the previous step
-                       )
-
-  global young poisson cohesion phi
+            E_new,       ... %  6*nt current strain tensor
+            Ep_prev      ... %  6*nt plastic strain from the previous step
+                            )
+ %
+  global nt                                  % number of tetrahedra
+  global c_bar sin_phi lame shear            % material parameters
+  global iota ELAST IDENT                    % constitutive operators
 
 % .........................................................................
 
-  n_int = size(E_new,2);
-
-  shear0 = young/(2*(1+poisson));
-  bulk0 = young/(3*(1-2*poisson));
-  lame0 = bulk0 - 2*shear0/3;
-  c_bar0 = 2*cohesion*cos(phi);
-  sin_phi0 = sin(phi);
-
-  c_bar = c_bar0*ones(1,n_int);
-  sin_phi = sin_phi0*ones(1,n_int);
-  shear = shear0*ones(1,n_int);
-  bulk = bulk0*ones(1,n_int);
-  lame = lame0*ones(1,n_int);
+  nt = size(E_new,2);
+  sin_psi = sin_phi;                         % associative flow rule
 
 % trial strain
-  E = E_new - Ep_prev;
-
-sin_psi=sin_phi;
-
-%
-% Linear constitutive operators
-%
-IDENT = diag([1, 1, 1, 1/2, 1/2, 1/2]) ; % identity operator
-iota=[1;1;1;0;0;0];
-VOL=iota*iota';
-DEV=diag([1,1,1,1/2,1/2,1/2])-VOL/3;
-ELAST=2*DEV(:)*shear+VOL(:)*bulk;   % size(ELAST)=(36,n_int)
-
-%
-% Trial strain and other auxiliary arrays:
-%   E_tr   - trial strain tensors, size(E_tr)=(6,n_int)
-%
-n_int=size(E,2); % number of integration points
-E_trial = E   ;  % strain representation
-E_tr = IDENT*E_trial ;     % stress representation
-E_square = ...             % square of the trial strain in stress repres.
+  E_trial = -Ep_prev ;
+  E_trial(1:6,:)=E_trial(1:6,:)+E_new;       % trial strain
+  E_tr = IDENT*E_trial;                      % trial strain in stress notation
+  E_square = ...                             % square of the trial strain
     [ E_tr(1,:).^2         + E_tr(4,:).^2         + E_tr(6,:).^2
-    E_tr(2,:).^2         + E_tr(4,:).^2         + E_tr(5,:).^2
-    E_tr(3,:).^2         + E_tr(5,:).^2         + E_tr(6,:).^2
-    E_tr(1,:).*E_tr(4,:) + E_tr(2,:).*E_tr(4,:) + E_tr(5,:).*E_tr(6,:)
-    E_tr(4,:).*E_tr(6,:) + E_tr(2,:).*E_tr(5,:) + E_tr(3,:).*E_tr(5,:)
-    E_tr(1,:).*E_tr(6,:) + E_tr(4,:).*E_tr(5,:) + E_tr(3,:).*E_tr(6,:) ];
+      E_tr(2,:).^2         + E_tr(4,:).^2         + E_tr(5,:).^2
+      E_tr(3,:).^2         + E_tr(5,:).^2         + E_tr(6,:).^2
+      E_tr(1,:).*E_tr(4,:) + E_tr(2,:).*E_tr(4,:) + E_tr(5,:).*E_tr(6,:)
+      E_tr(4,:).*E_tr(6,:) + E_tr(2,:).*E_tr(5,:) + E_tr(3,:).*E_tr(5,:)
+      E_tr(1,:).*E_tr(6,:) + E_tr(4,:).*E_tr(5,:) + E_tr(3,:).*E_tr(6,:) ];
 
-%
-% Invariants of the trial strain tensors (at integration points)
-%
-I1 = E_tr(1,:)+E_tr(2,:)+E_tr(3,:); % trace of E_trial
-I2 = E_tr(1,:).*E_tr(2,:)+E_tr(1,:).*E_tr(3,:)+E_tr(2,:).*E_tr(3,:)- ...
-    E_tr(4,:).^2 - E_tr(5,:).^2 - E_tr(6,:).^2;
-I3 = E_tr(1,:).*E_tr(2,:).*E_tr(3,:) - E_tr(3,:).*E_tr(4,:).^2 - ...
-    E_tr(2,:).*E_tr(6,:).^2 - E_tr(1,:).*E_tr(5,:).^2 + ...
-    2*E_tr(4,:).*E_tr(5,:).*E_tr(6,:) ;
+% ordered eigenvalues of the trial strain
+  I1 = E_tr(1,:)+E_tr(2,:)+E_tr(3,:);
+  I2 = E_tr(1,:).*E_tr(2,:)+E_tr(1,:).*E_tr(3,:)+...
+       E_tr(2,:).*E_tr(3,:)-E_tr(4,:).^2-E_tr(5,:).^2-E_tr(6,:).^2;
+  I3 = E_tr(1,:).*E_tr(2,:).*E_tr(3,:)-E_tr(3,:).*E_tr(4,:).^2-...
+       E_tr(2,:).*E_tr(6,:).^2-E_tr(1,:).*E_tr(5,:).^2+...
+       2*E_tr(4,:).*E_tr(5,:).*E_tr(6,:);
+  Q = max(0,(I1.^2-3*I2)/9);
+  R = (-2*I1.^3+9*I1.*I2-27*I3)/54;
+  test1=(Q==0);
+  theta0 = zeros(1,nt);
+  theta0(~test1)=R(~test1)./sqrt(Q(~test1).^3);
+  theta=acos(min(max(theta0,-1),1))/3;
 
-Q = max(0,(1/9)*((I1.^2) - 3*I2));
-R = (1/54)*(-2*(I1.^3) + 9*(I1.*I2) - 27*I3);
-test1 = (Q==0);
-theta0 = zeros(1,n_int);
-theta0(~test1) = R(~test1)./sqrt(Q(~test1).^3);
-theta = acos(min(max(theta0,-1),1))/3; % Lode's angle
+  eig_1 = -2*sqrt(Q).*cos(theta+2*pi/3)+I1/3;
+  eig_2 = -2*sqrt(Q).*cos(theta-2*pi/3)+I1/3;
+  eig_3 = -2*sqrt(Q).*cos(theta)+I1/3;
 
-%
-% Ordered eigenvalues of the trial strain tensors
-%
-eig_1 = -2*sqrt(Q).*cos(theta+2*pi/3) + I1/3 ;
-eig_2 = -2*sqrt(Q).*cos(theta-2*pi/3) + I1/3 ;
-eig_3 = -2*sqrt(Q).*cos(theta) + I1/3;
+% critical values
+  trace_E=eig_1+eig_2+eig_3;        % trace of E_trial
+  f_tr=2*shear*((1+sin_phi)*eig_1-(1-sin_phi)*eig_3)+ ...
+       2*lame*sin_phi*trace_E-c_bar; % test on admissibility
+  gamma_sl=(eig_1-eig_2)/(1+sin_psi);
+  gamma_sr=(eig_2-eig_3)/(1-sin_psi);
+  gamma_la=(eig_1+eig_2-2*eig_3)/(3-sin_psi);
+  gamma_ra=(2*eig_1-eig_2-eig_3)/(3+sin_psi);
 
-%
-% Critical values defining decision criteria
-%
-f_tr=2*shear.*((1+sin_phi).*eig_1-(1-sin_phi).*eig_3)+ ...
-    2*(lame.*sin_phi).*I1-c_bar;             % elast-plast interface
-gamma_sl=(eig_1-eig_2)./(1+sin_psi);          % smooth-left interface
-gamma_sr=(eig_2-eig_3)./(1-sin_psi);          % smooth-right interface
-gamma_la=(eig_1+eig_2-2*eig_3)./(3-sin_psi);  % left-apex interface
-gamma_ra=(2*eig_1-eig_2-eig_3)./(3+sin_psi);  % right-apex interface
+% candidates on plastic multipliers
+  denom_s=4*lame*sin_phi*sin_psi+4*shear*(1+sin_phi*sin_psi);
+  denom_l=4*lame*sin_phi*sin_psi+shear*(1+sin_phi)*(1+sin_psi)+...
+          2*shear*(1-sin_phi)*(1-sin_psi);
+  denom_r=4*lame*sin_phi*sin_psi+2*shear*(1+sin_phi)*(1+sin_psi)+...
+          shear*(1-sin_phi)*(1-sin_psi);
+  denom_a=4*(lame+2*shear/3)*sin_phi*sin_psi;
 
-%
-% Candidates on plastic multipliers
-%
-denom_s=4*lame.*sin_phi.*sin_psi+4*shear.*(1+sin_phi.*sin_psi);
-denom_l=4*lame.*sin_phi.*sin_psi+shear.*(1+sin_phi).*(1+sin_psi)+ ...
-    2*shear.*(1-sin_phi).*(1-sin_psi);
-denom_r=4*lame.*sin_phi.*sin_psi+2*shear.*(1+sin_phi).*(1+sin_psi)+ ...
-    shear.*(1-sin_phi).*(1-sin_psi);
-denom_a=4*bulk.*sin_phi.*sin_psi;  % denominators for each type of return
+  lambda_s=f_tr/denom_s ;
+  lambda_l=(shear*((1+sin_phi)*(eig_1+eig_2)-2*(1-sin_phi)*eig_3)+ ...
+            2*lame*sin_phi*trace_E-c_bar)/denom_l ;
+  lambda_r=(shear*(2*(1+sin_phi)*eig_1-(1-sin_phi)*(eig_2+eig_3))+ ...
+            2*lame*sin_phi*trace_E-c_bar)/denom_r ;
+  lambda_a=(2*(lame+2*shear/3)*sin_phi*trace_E-c_bar)/denom_a ;
 
-lambda_s=f_tr./denom_s ;
-lambda_l=(shear.*((1+sin_phi).*(eig_1+eig_2)-2*(1-sin_phi).*eig_3)+ ...
-    2*lame.*sin_phi.*I1-c_bar)./denom_l ;
-lambda_r=(shear.*(2*(1+sin_phi).*eig_1-(1-sin_phi).*(eig_2+eig_3))+ ...
-    2*lame.*sin_phi.*I1-c_bar)./denom_r ;
-lambda_a=(2*bulk.*sin_phi.*I1-c_bar)./denom_a ;
+% initialization of unknowns variables
+  S = zeros(6,nt);
+  sigma_1 = zeros(1,nt);
+  sigma_2 = zeros(1,nt);
+  sigma_3 = zeros(1,nt);   % principal stresses
+  Eig_1 = zeros(6,nt);
+  Eig_2 = zeros(6,nt);
+  Eig_3 = zeros(6,nt);     % eigenprojections of the trial strain (1st der.)
+  EIG_1 = zeros(36,nt);
+  EIG_2 = zeros(36,nt);
+  EIG_3 = zeros(36,nt);    % the second derivatives of the eigenvalues
+  return_type = zeros(1,nt);
 
-%
-% Determination of the stress array S
-%
-
-% initialization
-S = zeros(6,n_int);
-return_type = zeros(1,n_int);
-eig_values = [eig_1; eig_2; eig_3];
-sigma_values = zeros(3,n_int);
+% auxilliary array for the second derivatives of the eigenprojections
+  DER_E_square = ...       % 36*nt array (fourth order tensors)
+    [ 2*E_tr(1,:)   ; zeros(1,nt); zeros(1,nt); E_tr(4,:)                ; zeros(1,nt)           ; E_tr(6,:)
+      zeros(1,nt); 2*E_tr(2,:)   ; zeros(1,nt); E_tr(4,:)                ; E_tr(5,:)            ; zeros(1,nt)
+      zeros(1,nt); zeros(1,nt); 2*E_tr(3,:)   ; zeros(1,nt)              ; E_tr(5,:)            ; E_tr(6,:)
+      E_tr(4,:)  ; E_tr(4,:)     ; zeros(1,nt); 0.5*(E_tr(1,:)+E_tr(2,:)); 0.5*E_tr(6,:)        ; 0.5*E_tr(5,:)
+      zeros(1,nt); E_tr(5,:)     ; E_tr(5,:) ; 0.5*E_tr(6,:)             ; 0.5*(E_tr(2,:)+E_tr(3,:)); 0.5*E_tr(4,:)
+      E_tr(6,:)  ; zeros(1,nt)   ; E_tr(6,:) ; 0.5*E_tr(5,:)             ; 0.5*E_tr(4,:)        ; 0.5*(E_tr(1,:)+E_tr(3,:)) ];
 
 % elastic response
-test_el = (f_tr<=0);
-lame_el=lame(test_el);
-shear_el=shear(test_el);
-sigma_1_el=lame_el.*I1(test_el)+2*shear_el.*eig_1(test_el);
-sigma_2_el=lame_el.*I1(test_el)+2*shear_el.*eig_2(test_el);
-sigma_3_el=lame_el.*I1(test_el)+2*shear_el.*eig_3(test_el);
-sigma_values(:,test_el) = [sigma_1_el; sigma_2_el; sigma_3_el];
-S(:,test_el)=  repmat(lame_el,6,1).*(VOL*E_trial(:,test_el))+...
-    2*repmat(shear_el,6,1).*(IDENT*E_trial(:,test_el));
+  test_el=(f_tr<=0);
+  nt_el=length(sigma_1(test_el));
+  sigma_1(test_el)=lame*trace_E(test_el)+2*shear*eig_1(test_el);
+  sigma_2(test_el)=lame*trace_E(test_el)+2*shear*eig_2(test_el);
+  sigma_3(test_el)=lame*trace_E(test_el)+2*shear*eig_3(test_el);
+  S(:,test_el) = ELAST*E_trial(:,test_el) ;
 
 % return to the smooth portion of the yield surface
-test_s = (lambda_s<=min(gamma_sl,gamma_sr))&(~test_el);
-return_type(test_s) = 1;
-lame_s=lame(test_s);
-shear_s=shear(test_s);
-sin_phi_s=sin_phi(test_s);
-sin_psi_s=sin_psi(test_s);
-eig_1_s=eig_1(test_s);
-eig_2_s=eig_2(test_s);
-eig_3_s=eig_3(test_s);
-I1_s=I1(test_s);
-E_square_s=E_square(:,test_s);
-E_tr_s=E_tr(:,test_s);
-lambda_s=lambda_s(test_s);
-% eigenprojections
-denom_s1 = (eig_1_s-eig_2_s).*(eig_1_s-eig_3_s);
-denom_s2 = (eig_2_s-eig_1_s).*(eig_2_s-eig_3_s);
-denom_s3 = (eig_3_s-eig_1_s).*(eig_3_s-eig_2_s);
-Eig_1_s = (ones(6,1)*(1./denom_s1)).* ( E_square_s -...
-    (ones(6,1)*(eig_2_s+eig_3_s)).*E_tr_s +...
-    iota*(eig_2_s.*eig_3_s) );
-Eig_2_s = (ones(6,1)*(1./denom_s2)).* ( E_square_s -...
-    (ones(6,1)*(eig_1_s+eig_3_s)).*E_tr_s +...
-    iota*(eig_1_s.*eig_3_s) );
-Eig_3_s = (ones(6,1)*(1./denom_s3)).* ( E_square_s -...
-    (ones(6,1)*(eig_1_s+eig_2_s)).*E_tr_s +...
-    iota*(eig_1_s.*eig_2_s) );
-% principal stresses
-sigma_1_s = lame_s.*I1_s+2*shear_s.*eig_1_s-...
-    lambda_s.*(2*lame_s.*sin_psi_s+2*shear_s.*(1+sin_psi_s));
-sigma_2_s = lame_s.*I1_s+2*shear_s.*eig_2_s-...
-    lambda_s.*(2*lame_s.*sin_psi_s);
-sigma_3_s = lame_s.*I1_s+2*shear_s.*eig_3_s-...
-    lambda_s.*(2*lame_s.*sin_psi_s-2*shear_s.*(1-sin_psi_s));
-sigma_values(:,test_s) = [sigma_1_s; sigma_2_s; sigma_3_s];
-% unknown stress tensors
-S(:,test_s) = (ones(6,1)*sigma_1_s).*Eig_1_s+...
-    (ones(6,1)*sigma_2_s).*Eig_2_s+...
-    (ones(6,1)*sigma_3_s).*Eig_3_s;
+  test_s=(lambda_s<=min(gamma_sl,gamma_sr))&(~test_el);
+  lambda_s=lambda_s(test_s);
+  nt_s=length(sigma_1(test_s));
+  eig_1_s=eig_1(test_s);
+  eig_2_s=eig_2(test_s);
+  eig_3_s=eig_3(test_s);
+  E_square_s=E_square(:,test_s);
+  E_tr_s=E_tr(:,test_s);
+  denom_s1=(eig_1_s-eig_2_s).*(eig_1_s-eig_3_s);
+  denom_s2=(eig_2_s-eig_1_s).*(eig_2_s-eig_3_s);
+  denom_s3=(eig_3_s-eig_1_s).*(eig_3_s-eig_2_s);
+  Eig_1_s=(ones(6,1)*(1./denom_s1)).*(E_square_s-...
+          (ones(6,1)*(eig_2_s+eig_3_s)).*E_tr_s+iota*(eig_2_s.*eig_3_s));
+  Eig_2_s=(ones(6,1)*(1./denom_s2)).*(E_square_s-...
+          (ones(6,1)*(eig_1_s+eig_3_s)).*E_tr_s+iota*(eig_1_s.*eig_3_s));
+  Eig_3_s=(ones(6,1)*(1./denom_s3)).*(E_square_s-...
+          (ones(6,1)*(eig_1_s+eig_2_s)).*E_tr_s+iota*(eig_1_s.*eig_2_s));
+  Eig_1(:,test_s)=Eig_1_s;
+  Eig_2(:,test_s)=Eig_2_s;
+  Eig_3(:,test_s)=Eig_3_s;
+  [EIG_1(:,test_s),EIG_2(:,test_s),EIG_3(:,test_s)] = ...
+      eigenprojection_derivatives_smooth(DER_E_square(:,test_s),IDENT,...
+        Eig_1_s,Eig_2_s,Eig_3_s,eig_1_s,eig_2_s,eig_3_s,...
+        denom_s1,denom_s2,denom_s3);
+  sigma_1(test_s)=lame*trace_E(test_s)+2*shear*eig_1(test_s)-...
+                  lambda_s*(2*lame*sin_psi+2*shear*(1+sin_psi));
+  sigma_2(test_s)=lame*trace_E(test_s)+2*shear*eig_2(test_s)-...
+                  lambda_s*(2*lame*sin_psi);
+  sigma_3(test_s)=lame*trace_E(test_s)+2*shear*eig_3(test_s)-...
+                  lambda_s*(2*lame*sin_psi-2*shear*(1-sin_psi));
+  S(:,test_s)=(ones(6,1)*sigma_1(test_s)).*Eig_1(:,test_s)+...
+              (ones(6,1)*sigma_2(test_s)).*Eig_2(:,test_s)+...
+              (ones(6,1)*sigma_3(test_s)).*Eig_3(:,test_s);
+  return_type(test_s)=1;
 
 % return to the left edge of the yield surface
-test_l = (gamma_sl<gamma_sr)&(lambda_l>=gamma_sl)&...
-    (lambda_l<=gamma_la)&(~(test_el|test_s));
-return_type(test_l) = 2;
-lame_l=lame(test_l);
-shear_l=shear(test_l);
-sin_phi_l=sin_phi(test_l);
-sin_psi_l=sin_psi(test_l);
-nt_l=length(lame_l);
-eig_1_l=eig_1(test_l);
-eig_2_l=eig_2(test_l);
-eig_3_l=eig_3(test_l);
-I1_l=I1(test_l);
-lambda_l=lambda_l(test_l);
-E_square_l=E_square(:,test_l);
-E_tr_l=E_tr(:,test_l);
-% eigenprojections
-denom_l3 = (eig_3_l-eig_1_l).*(eig_3_l-eig_2_l);
-Eig_3_l  = (ones(6,1)*(1./denom_l3)).* ( E_square_l -...
-    (ones(6,1)*(eig_1_l+eig_2_l)).*E_tr_l +...
-    iota*(eig_1_l.*eig_2_l) );
-Eig_12_l = [ones(3,nt_l); zeros(3,nt_l)] - Eig_3_l;
-% principal stresses
-sigma_1_l = lame_l.*I1_l+shear_l.*(eig_1_l+eig_2_l)-...
-    lambda_l.*(2*lame_l.*sin_psi_l+shear_l.*(1+sin_psi_l));
-sigma_3_l = lame_l.*I1_l+2*shear_l.*eig_3_l-...
-    lambda_l.*(2*lame_l.*sin_psi_l-2*shear_l.*(1-sin_psi_l));
-sigma_values(:,test_l) = [sigma_1_l; sigma_1_l; sigma_3_l];
-% unknown stress tensors
-S(:,test_l) = (ones(6,1)*sigma_1_l).*Eig_12_l+...
-    (ones(6,1)*sigma_3_l).*Eig_3_l;
+  test_l=(gamma_sl<gamma_sr)&(lambda_l>=gamma_sl)&(lambda_l<=gamma_la)&...
+         (~(test_el|test_s));
+  lambda_l=lambda_l(test_l);
+  nt_l=length(sigma_1(test_l));
+  eig_1_l=eig_1(test_l);
+  eig_2_l=eig_2(test_l);
+  eig_3_l=eig_3(test_l);
+  E_square_l=E_square(:,test_l);
+  E_tr_l=E_tr(:,test_l);
+  denom_l3=(eig_3_l-eig_1_l).*(eig_3_l-eig_2_l);
+  Eig_3_l=(ones(6,1)*(1./denom_l3)).*(E_square_l-...
+          (ones(6,1)*(eig_1_l+eig_2_l)).*E_tr_l+iota*(eig_1_l.*eig_2_l));
+  Eig_12_l=[ones(3,nt_l); zeros(3,nt_l)]-Eig_3_l;
+  Eig_3(:,test_l)=Eig_3_l;
+  EIG_3(:,test_l)=eigenprojection_derivative_left(DER_E_square(:,test_l),...
+    IDENT,E_tr_l,Eig_12_l,Eig_3_l,eig_1_l,eig_2_l,eig_3_l,denom_l3);
+  sigma_1(test_l)=lame*trace_E(test_l)+...
+                  shear*(eig_1(test_l)+eig_2(test_l))-...
+                  lambda_l*(2*lame*sin_psi+shear*(1+sin_psi));
+  sigma_2(test_l)=sigma_1(test_l);
+  sigma_3(test_l)=lame*trace_E(test_l)+2*shear*eig_3(test_l)-...
+                  lambda_l*(2*lame*sin_psi-2*shear*(1-sin_psi));
+  S(:,test_l)=(ones(6,1)*sigma_1(test_l)).*Eig_12_l+...
+              (ones(6,1)*sigma_3(test_l)).*Eig_3(:,test_l);
+  return_type(test_l)=2;
 
 % return to the right edge of the yield surface
-test_r = (gamma_sl>gamma_sr)&(lambda_r>=gamma_sr)&...
-    (lambda_r<=gamma_ra)&(~(test_el|test_s));
-return_type(test_r) = 3;
-lame_r=lame(test_r);
-shear_r=shear(test_r);
-sin_phi_r=sin_phi(test_r);
-sin_psi_r=sin_psi(test_r);
-nt_r=length(lame_r);
-eig_1_r=eig_1(test_r);
-eig_2_r=eig_2(test_r);
-eig_3_r=eig_3(test_r);
-I1_r=I1(test_r);
-lambda_r=lambda_r(test_r);
-% eigenprojections
-denom_r1 = (eig_1_r-eig_2_r).*(eig_1_r-eig_3_r);
-Eig_1_r  = (ones(6,1)*(1./denom_r1)).* ( E_square(:,test_r) -...
-    (ones(6,1)*(eig_2_r+eig_3_r)).*E_tr(:,test_r) +...
-    iota*(eig_2_r.*eig_3_r) );
-Eig_23_r = [ones(3,nt_r); zeros(3,nt_r)] - Eig_1_r ;
-% principal stresses
-sigma_1_r = lame_r.*I1_r+2*shear_r.*eig_1_r-...
-    lambda_r.*(2*lame_r.*sin_psi_r+2*shear_r.*(1+sin_psi_r));
-sigma_3_r = lame_r.*I1_r+shear_r.*(eig_2_r+eig_3_r)-...
-    lambda_r.*(2*lame_r.*sin_psi_r-shear_r.*(1-sin_psi_r));
-sigma_values(:,test_r) = [sigma_1_r; sigma_3_r; sigma_3_r];
-% unknown stress tensors
-S(:,test_r) = (ones(6,1)*sigma_1_r).*Eig_1_r+...
-    (ones(6,1)*sigma_3_r).*Eig_23_r;
+  test_r=(gamma_sl>gamma_sr)&(lambda_r>=gamma_sr)&(lambda_r<=gamma_ra)&...
+         (~(test_el|test_s));
+  lambda_r=lambda_r(test_r);
+  nt_r=length(sigma_1(test_r));
+  eig_1_r=eig_1(test_r);
+  eig_2_r=eig_2(test_r);
+  eig_3_r=eig_3(test_r);
+  E_square_r=E_square(:,test_r);
+  E_tr_r=E_tr(:,test_r);
+  denom_r1=(eig_1_r-eig_2_r).*(eig_1_r-eig_3_r);
+  Eig_1_r=(ones(6,1)*(1./denom_r1)).*(E_square_r-...
+          (ones(6,1)*(eig_2_r+eig_3_r)).*E_tr_r+iota*(eig_2_r.*eig_3_r));
+  Eig_23_r=[ones(3,nt_r); zeros(3,nt_r)]-Eig_1_r;
+  Eig_1(:,test_r)=Eig_1_r;
+  EIG_1(:,test_r)=eigenprojection_derivative_right(DER_E_square(:,test_r),...
+    IDENT,E_tr_r,Eig_1_r,Eig_23_r,eig_1_r,eig_2_r,eig_3_r,denom_r1);
+  sigma_1(test_r)=lame*trace_E(test_r)+2*shear*eig_1(test_r)-...
+                  lambda_r*(2*lame*sin_psi+2*shear*(1+sin_psi));
+  sigma_3(test_r)=lame*trace_E(test_r)+...
+                  shear*(eig_2(test_r)+eig_3(test_r))-...
+                  lambda_r*(2*lame*sin_psi-shear*(1-sin_psi));
+  sigma_2(test_r)=sigma_3(test_r);
+  S(:,test_r)=(ones(6,1)*sigma_1(test_r)).*Eig_1(:,test_r)+...
+              (ones(6,1)*sigma_3(test_r)).*Eig_23_r;
+  return_type(test_r)=3;
 
 % return to the apex of the yield surface
-test_a=~(test_el|test_s|test_l|test_r);
-return_type(test_a) = 4;
-lambda_a=lambda_a(test_a);
-nt_a=length(lambda_a);
-sigma_1_a = c_bar(test_a)./(2*sin_phi(test_a));
-sigma_values(:,test_a) = [sigma_1_a; sigma_1_a; sigma_1_a];
-S(:,test_a) = iota*sigma_1_a;
+  test_a=~(test_el|test_s|test_l|test_r);
+  lambda_a=lambda_a(test_a);
+  nt_a=length(lambda_a);
+  if (nt~=nt_el+nt_s+nt_l+nt_r+nt_a), warning('number of elements!'), end
+  sigma_1(test_a)=ones(1,nt_a)*c_bar/(2*sin_phi);
+  sigma_2(test_a)=sigma_1(test_a);
+  sigma_3(test_a)=sigma_1(test_a);
+  S(:,test_a)=iota*sigma_1(test_a);
+  return_type(test_a)=4;
 
-%
-% Determination of the tangential stiffness array DS
-%
+end
 
-if nargout>1
+function [EIG_1,EIG_2,EIG_3] = eigenprojection_derivatives_smooth( ...
+  DER_E_square,IDENT,Eig_1,Eig_2,Eig_3,eig_1,eig_2,eig_3,...
+  denom_1,denom_2,denom_3)
 
-    % initialization of the unknown array
-    DS = zeros(36,n_int);
+  E1_x_E1 = column_outer(Eig_1,Eig_1);
+  E2_x_E2 = column_outer(Eig_2,Eig_2);
+  E3_x_E3 = column_outer(Eig_3,Eig_3);
 
-    % derivative of the square of the trial strain tensor(stress notation)
-    DER_E_square = ... % 36*n_int array (fourth order tensors at int. points)
-        [ 2*E_tr(1,:)   ; zeros(1,n_int); zeros(1,n_int); E_tr(4,:)                ; zeros(1,n_int)           ; E_tr(6,:)
-        zeros(1,n_int); 2*E_tr(2,:)   ; zeros(1,n_int); E_tr(4,:)                ; E_tr(5,:)                ; zeros(1,n_int)
-        zeros(1,n_int); zeros(1,n_int); 2*E_tr(3,:)   ; zeros(1,n_int)           ; E_tr(5,:)                ; E_tr(6,:)
-        E_tr(4,:)     ; E_tr(4,:)     ; zeros(1,n_int); 0.5*(E_tr(1,:)+E_tr(2,:)); 0.5*E_tr(6,:)            ; 0.5*E_tr(5,:)
-        zeros(1,n_int); E_tr(5,:)     ; E_tr(5,:)     ; 0.5*E_tr(6,:)            ; 0.5*(E_tr(2,:)+E_tr(3,:)); 0.5*E_tr(4,:)
-        E_tr(6,:)     ; zeros(1,n_int); E_tr(6,:)     ; 0.5*E_tr(5,:)            ; 0.5*E_tr(4,:)            ; 0.5*(E_tr(1,:)+E_tr(3,:)) ];
+  EIG_1 = (ones(36,1)*(1./denom_1)).*(DER_E_square-...
+          IDENT(:)*(eig_2+eig_3)-...
+          (ones(36,1)*(2*eig_1-eig_2-eig_3)).*E1_x_E1-...
+          (ones(36,1)*(eig_2-eig_3)).*(E2_x_E2-E3_x_E3));
+  EIG_2 = (ones(36,1)*(1./denom_2)).*(DER_E_square-...
+          IDENT(:)*(eig_1+eig_3)-...
+          (ones(36,1)*(2*eig_2-eig_1-eig_3)).*E2_x_E2-...
+          (ones(36,1)*(eig_1-eig_3)).*(E1_x_E1-E3_x_E3));
+  EIG_3 = (ones(36,1)*(1./denom_3)).*(DER_E_square-...
+          IDENT(:)*(eig_1+eig_2)-...
+          (ones(36,1)*(2*eig_3-eig_1-eig_2)).*E3_x_E3-...
+          (ones(36,1)*(eig_1-eig_2)).*(E1_x_E1-E2_x_E2));
 
-    % elastic response
-    DS(:,test_el)=ELAST(:,test_el);
+end
 
-    % return to the smooth portion of the yield surface
-    % auxilliary arrays (36*n_int)
-    E1_x_E1 = ...
-        [ Eig_1_s(1,:).*Eig_1_s(1,:); Eig_1_s(2,:).*Eig_1_s(1,:); Eig_1_s(3,:).*Eig_1_s(1,:); Eig_1_s(4,:).*Eig_1_s(1,:); Eig_1_s(5,:).*Eig_1_s(1,:); Eig_1_s(6,:).*Eig_1_s(1,:)
-        Eig_1_s(1,:).*Eig_1_s(2,:); Eig_1_s(2,:).*Eig_1_s(2,:); Eig_1_s(3,:).*Eig_1_s(2,:); Eig_1_s(4,:).*Eig_1_s(2,:); Eig_1_s(5,:).*Eig_1_s(2,:); Eig_1_s(6,:).*Eig_1_s(2,:)
-        Eig_1_s(1,:).*Eig_1_s(3,:); Eig_1_s(2,:).*Eig_1_s(3,:); Eig_1_s(3,:).*Eig_1_s(3,:); Eig_1_s(4,:).*Eig_1_s(3,:); Eig_1_s(5,:).*Eig_1_s(3,:); Eig_1_s(6,:).*Eig_1_s(3,:)
-        Eig_1_s(1,:).*Eig_1_s(4,:); Eig_1_s(2,:).*Eig_1_s(4,:); Eig_1_s(3,:).*Eig_1_s(4,:); Eig_1_s(4,:).*Eig_1_s(4,:); Eig_1_s(5,:).*Eig_1_s(4,:); Eig_1_s(6,:).*Eig_1_s(4,:)
-        Eig_1_s(1,:).*Eig_1_s(5,:); Eig_1_s(2,:).*Eig_1_s(5,:); Eig_1_s(3,:).*Eig_1_s(5,:); Eig_1_s(4,:).*Eig_1_s(5,:); Eig_1_s(5,:).*Eig_1_s(5,:); Eig_1_s(6,:).*Eig_1_s(5,:)
-        Eig_1_s(1,:).*Eig_1_s(6,:); Eig_1_s(2,:).*Eig_1_s(6,:); Eig_1_s(3,:).*Eig_1_s(6,:); Eig_1_s(4,:).*Eig_1_s(6,:); Eig_1_s(5,:).*Eig_1_s(6,:); Eig_1_s(6,:).*Eig_1_s(6,:) ];
-    E2_x_E2 = ...
-        [ Eig_2_s(1,:).*Eig_2_s(1,:); Eig_2_s(2,:).*Eig_2_s(1,:); Eig_2_s(3,:).*Eig_2_s(1,:); Eig_2_s(4,:).*Eig_2_s(1,:); Eig_2_s(5,:).*Eig_2_s(1,:); Eig_2_s(6,:).*Eig_2_s(1,:)
-        Eig_2_s(1,:).*Eig_2_s(2,:); Eig_2_s(2,:).*Eig_2_s(2,:); Eig_2_s(3,:).*Eig_2_s(2,:); Eig_2_s(4,:).*Eig_2_s(2,:); Eig_2_s(5,:).*Eig_2_s(2,:); Eig_2_s(6,:).*Eig_2_s(2,:)
-        Eig_2_s(1,:).*Eig_2_s(3,:); Eig_2_s(2,:).*Eig_2_s(3,:); Eig_2_s(3,:).*Eig_2_s(3,:); Eig_2_s(4,:).*Eig_2_s(3,:); Eig_2_s(5,:).*Eig_2_s(3,:); Eig_2_s(6,:).*Eig_2_s(3,:)
-        Eig_2_s(1,:).*Eig_2_s(4,:); Eig_2_s(2,:).*Eig_2_s(4,:); Eig_2_s(3,:).*Eig_2_s(4,:); Eig_2_s(4,:).*Eig_2_s(4,:); Eig_2_s(5,:).*Eig_2_s(4,:); Eig_2_s(6,:).*Eig_2_s(4,:)
-        Eig_2_s(1,:).*Eig_2_s(5,:); Eig_2_s(2,:).*Eig_2_s(5,:); Eig_2_s(3,:).*Eig_2_s(5,:); Eig_2_s(4,:).*Eig_2_s(5,:); Eig_2_s(5,:).*Eig_2_s(5,:); Eig_2_s(6,:).*Eig_2_s(5,:)
-        Eig_2_s(1,:).*Eig_2_s(6,:); Eig_2_s(2,:).*Eig_2_s(6,:); Eig_2_s(3,:).*Eig_2_s(6,:); Eig_2_s(4,:).*Eig_2_s(6,:); Eig_2_s(5,:).*Eig_2_s(6,:); Eig_2_s(6,:).*Eig_2_s(6,:) ];
-    E3_x_E3 = ...
-        [ Eig_3_s(1,:).*Eig_3_s(1,:); Eig_3_s(2,:).*Eig_3_s(1,:); Eig_3_s(3,:).*Eig_3_s(1,:); Eig_3_s(4,:).*Eig_3_s(1,:); Eig_3_s(5,:).*Eig_3_s(1,:); Eig_3_s(6,:).*Eig_3_s(1,:)
-        Eig_3_s(1,:).*Eig_3_s(2,:); Eig_3_s(2,:).*Eig_3_s(2,:); Eig_3_s(3,:).*Eig_3_s(2,:); Eig_3_s(4,:).*Eig_3_s(2,:); Eig_3_s(5,:).*Eig_3_s(2,:); Eig_3_s(6,:).*Eig_3_s(2,:)
-        Eig_3_s(1,:).*Eig_3_s(3,:); Eig_3_s(2,:).*Eig_3_s(3,:); Eig_3_s(3,:).*Eig_3_s(3,:); Eig_3_s(4,:).*Eig_3_s(3,:); Eig_3_s(5,:).*Eig_3_s(3,:); Eig_3_s(6,:).*Eig_3_s(3,:)
-        Eig_3_s(1,:).*Eig_3_s(4,:); Eig_3_s(2,:).*Eig_3_s(4,:); Eig_3_s(3,:).*Eig_3_s(4,:); Eig_3_s(4,:).*Eig_3_s(4,:); Eig_3_s(5,:).*Eig_3_s(4,:); Eig_3_s(6,:).*Eig_3_s(4,:)
-        Eig_3_s(1,:).*Eig_3_s(5,:); Eig_3_s(2,:).*Eig_3_s(5,:); Eig_3_s(3,:).*Eig_3_s(5,:); Eig_3_s(4,:).*Eig_3_s(5,:); Eig_3_s(5,:).*Eig_3_s(5,:); Eig_3_s(6,:).*Eig_3_s(5,:)
-        Eig_3_s(1,:).*Eig_3_s(6,:); Eig_3_s(2,:).*Eig_3_s(6,:); Eig_3_s(3,:).*Eig_3_s(6,:); Eig_3_s(4,:).*Eig_3_s(6,:); Eig_3_s(5,:).*Eig_3_s(6,:); Eig_3_s(6,:).*Eig_3_s(6,:) ];
-    % derivatives of eigenprojections  (36*n_int)
-    DER_E_square_s=DER_E_square(:,test_s);
-    EIG_1_s = (ones(36,1)*(1./denom_s1)).*( ...
-        DER_E_square_s - ...
-        IDENT(:)*(eig_2_s+eig_3_s) - ...
-        (ones(36,1)*(2*eig_1_s-eig_2_s-eig_3_s)).*E1_x_E1-...
-        (ones(36,1)*(eig_2_s-eig_3_s)).*(E2_x_E2 - E3_x_E3) ...
-        );
-    EIG_2_s = (ones(36,1)*(1./denom_s2)).*( ...
-        DER_E_square_s - ...
-        IDENT(:)*(eig_1_s+eig_3_s) - ...
-        (ones(36,1)*(2*eig_2_s-eig_1_s-eig_3_s)).*E2_x_E2-...
-        (ones(36,1)*(eig_1_s-eig_3_s)).*(E1_x_E1 - E3_x_E3) ...
-        );
-    EIG_3_s = (ones(36,1)*(1./denom_s3)).*( ...
-        DER_E_square_s - ...
-        IDENT(:)*(eig_1_s+eig_2_s) - ...
-        (ones(36,1)*(2*eig_3_s-eig_1_s-eig_2_s)).*E3_x_E3-...
-        (ones(36,1)*(eig_1_s-eig_2_s)).*(E1_x_E1 - E2_x_E2) ...
-        );
-    % computation of the consistent tangent operators (36*n_int)
-    Sder1_s=(ones(36,1)*sigma_1_s).*EIG_1_s+...
-        (ones(36,1)*sigma_2_s).*EIG_2_s+...
-        (ones(36,1)*sigma_3_s).*EIG_3_s;
-    Sder2_s=VOL(:)*lame_s;
-    Sder3_s=2*repmat(shear_s,36,1).*( E1_x_E1 + E2_x_E2 + E3_x_E3 ) ;
-    D_phi_s = 2*repmat(shear_s,6,1).*(repmat(1+sin_phi_s,6,1).*Eig_1_s-repmat(1-sin_phi_s,6,1).*Eig_3_s)...
-        +2*iota*(lame_s.*sin_phi_s);
-    D_psi_s = 2*repmat(shear_s,6,1).*(repmat(1+sin_psi_s,6,1).*Eig_1_s-repmat(1-sin_psi_s,6,1).*Eig_3_s)...
-        +2*iota*(lame_s.*sin_psi_s);
-    Sder4_s = ...
-        [ D_psi_s(1,:).*D_phi_s(1,:); D_psi_s(2,:).*D_phi_s(1,:); D_psi_s(3,:).*D_phi_s(1,:); D_psi_s(4,:).*D_phi_s(1,:); D_psi_s(5,:).*D_phi_s(1,:); D_psi_s(6,:).*D_phi_s(1,:)
-        D_psi_s(1,:).*D_phi_s(2,:); D_psi_s(2,:).*D_phi_s(2,:); D_psi_s(3,:).*D_phi_s(2,:); D_psi_s(4,:).*D_phi_s(2,:); D_psi_s(5,:).*D_phi_s(2,:); D_psi_s(6,:).*D_phi_s(2,:)
-        D_psi_s(1,:).*D_phi_s(3,:); D_psi_s(2,:).*D_phi_s(3,:); D_psi_s(3,:).*D_phi_s(3,:); D_psi_s(4,:).*D_phi_s(3,:); D_psi_s(5,:).*D_phi_s(3,:); D_psi_s(6,:).*D_phi_s(3,:)
-        D_psi_s(1,:).*D_phi_s(4,:); D_psi_s(2,:).*D_phi_s(4,:); D_psi_s(3,:).*D_phi_s(4,:); D_psi_s(4,:).*D_phi_s(4,:); D_psi_s(5,:).*D_phi_s(4,:); D_psi_s(6,:).*D_phi_s(4,:)
-        D_psi_s(1,:).*D_phi_s(5,:); D_psi_s(2,:).*D_phi_s(5,:); D_psi_s(3,:).*D_phi_s(5,:); D_psi_s(4,:).*D_phi_s(5,:); D_psi_s(5,:).*D_phi_s(5,:); D_psi_s(6,:).*D_phi_s(5,:)
-        D_psi_s(1,:).*D_phi_s(6,:); D_psi_s(2,:).*D_phi_s(6,:); D_psi_s(3,:).*D_phi_s(6,:); D_psi_s(4,:).*D_phi_s(6,:); D_psi_s(5,:).*D_phi_s(6,:); D_psi_s(6,:).*D_phi_s(6,:) ]./repmat(denom_s(test_s),36,1);
-    DS(:,test_s)=Sder1_s+Sder2_s+Sder3_s-Sder4_s;
+function EIG_3 = eigenprojection_derivative_left( ...
+  DER_E_square,IDENT,E_tr,Eig_12,Eig_3,eig_1,eig_2,eig_3,denom_3)
 
-    % return to the left edge of the yield surface
-    % auxilliary arrays (36*n_int)
-    E3_x_E3 = ...
-        [ Eig_3_l(1,:).*Eig_3_l(1,:); Eig_3_l(2,:).*Eig_3_l(1,:); Eig_3_l(3,:).*Eig_3_l(1,:); Eig_3_l(4,:).*Eig_3_l(1,:); Eig_3_l(5,:).*Eig_3_l(1,:); Eig_3_l(6,:).*Eig_3_l(1,:)
-        Eig_3_l(1,:).*Eig_3_l(2,:); Eig_3_l(2,:).*Eig_3_l(2,:); Eig_3_l(3,:).*Eig_3_l(2,:); Eig_3_l(4,:).*Eig_3_l(2,:); Eig_3_l(5,:).*Eig_3_l(2,:); Eig_3_l(6,:).*Eig_3_l(2,:)
-        Eig_3_l(1,:).*Eig_3_l(3,:); Eig_3_l(2,:).*Eig_3_l(3,:); Eig_3_l(3,:).*Eig_3_l(3,:); Eig_3_l(4,:).*Eig_3_l(3,:); Eig_3_l(5,:).*Eig_3_l(3,:); Eig_3_l(6,:).*Eig_3_l(3,:)
-        Eig_3_l(1,:).*Eig_3_l(4,:); Eig_3_l(2,:).*Eig_3_l(4,:); Eig_3_l(3,:).*Eig_3_l(4,:); Eig_3_l(4,:).*Eig_3_l(4,:); Eig_3_l(5,:).*Eig_3_l(4,:); Eig_3_l(6,:).*Eig_3_l(4,:)
-        Eig_3_l(1,:).*Eig_3_l(5,:); Eig_3_l(2,:).*Eig_3_l(5,:); Eig_3_l(3,:).*Eig_3_l(5,:); Eig_3_l(4,:).*Eig_3_l(5,:); Eig_3_l(5,:).*Eig_3_l(5,:); Eig_3_l(6,:).*Eig_3_l(5,:)
-        Eig_3_l(1,:).*Eig_3_l(6,:); Eig_3_l(2,:).*Eig_3_l(6,:); Eig_3_l(3,:).*Eig_3_l(6,:); Eig_3_l(4,:).*Eig_3_l(6,:); Eig_3_l(5,:).*Eig_3_l(6,:); Eig_3_l(6,:).*Eig_3_l(6,:) ];
-    E12_x_E12 = ...
-        [ Eig_12_l(1,:).*Eig_12_l(1,:); Eig_12_l(2,:).*Eig_12_l(1,:); Eig_12_l(3,:).*Eig_12_l(1,:); Eig_12_l(4,:).*Eig_12_l(1,:); Eig_12_l(5,:).*Eig_12_l(1,:); Eig_12_l(6,:).*Eig_12_l(1,:)
-        Eig_12_l(1,:).*Eig_12_l(2,:); Eig_12_l(2,:).*Eig_12_l(2,:); Eig_12_l(3,:).*Eig_12_l(2,:); Eig_12_l(4,:).*Eig_12_l(2,:); Eig_12_l(5,:).*Eig_12_l(2,:); Eig_12_l(6,:).*Eig_12_l(2,:)
-        Eig_12_l(1,:).*Eig_12_l(3,:); Eig_12_l(2,:).*Eig_12_l(3,:); Eig_12_l(3,:).*Eig_12_l(3,:); Eig_12_l(4,:).*Eig_12_l(3,:); Eig_12_l(5,:).*Eig_12_l(3,:); Eig_12_l(6,:).*Eig_12_l(3,:)
-        Eig_12_l(1,:).*Eig_12_l(4,:); Eig_12_l(2,:).*Eig_12_l(4,:); Eig_12_l(3,:).*Eig_12_l(4,:); Eig_12_l(4,:).*Eig_12_l(4,:); Eig_12_l(5,:).*Eig_12_l(4,:); Eig_12_l(6,:).*Eig_12_l(4,:)
-        Eig_12_l(1,:).*Eig_12_l(5,:); Eig_12_l(2,:).*Eig_12_l(5,:); Eig_12_l(3,:).*Eig_12_l(5,:); Eig_12_l(4,:).*Eig_12_l(5,:); Eig_12_l(5,:).*Eig_12_l(5,:); Eig_12_l(6,:).*Eig_12_l(5,:)
-        Eig_12_l(1,:).*Eig_12_l(6,:); Eig_12_l(2,:).*Eig_12_l(6,:); Eig_12_l(3,:).*Eig_12_l(6,:); Eig_12_l(4,:).*Eig_12_l(6,:); Eig_12_l(5,:).*Eig_12_l(6,:); Eig_12_l(6,:).*Eig_12_l(6,:) ];
-    E_tr_l = E_tr(:,test_l) ;
-    E12_x_Etr = ...
-        [ Eig_12_l(1,:).*E_tr_l(1,:); Eig_12_l(2,:).*E_tr_l(1,:); Eig_12_l(3,:).*E_tr_l(1,:); Eig_12_l(4,:).*E_tr_l(1,:); Eig_12_l(5,:).*E_tr_l(1,:); Eig_12_l(6,:).*E_tr_l(1,:)
-        Eig_12_l(1,:).*E_tr_l(2,:); Eig_12_l(2,:).*E_tr_l(2,:); Eig_12_l(3,:).*E_tr_l(2,:); Eig_12_l(4,:).*E_tr_l(2,:); Eig_12_l(5,:).*E_tr_l(2,:); Eig_12_l(6,:).*E_tr_l(2,:)
-        Eig_12_l(1,:).*E_tr_l(3,:); Eig_12_l(2,:).*E_tr_l(3,:); Eig_12_l(3,:).*E_tr_l(3,:); Eig_12_l(4,:).*E_tr_l(3,:); Eig_12_l(5,:).*E_tr_l(3,:); Eig_12_l(6,:).*E_tr_l(3,:)
-        Eig_12_l(1,:).*E_tr_l(4,:); Eig_12_l(2,:).*E_tr_l(4,:); Eig_12_l(3,:).*E_tr_l(4,:); Eig_12_l(4,:).*E_tr_l(4,:); Eig_12_l(5,:).*E_tr_l(4,:); Eig_12_l(6,:).*E_tr_l(4,:)
-        Eig_12_l(1,:).*E_tr_l(5,:); Eig_12_l(2,:).*E_tr_l(5,:); Eig_12_l(3,:).*E_tr_l(5,:); Eig_12_l(4,:).*E_tr_l(5,:); Eig_12_l(5,:).*E_tr_l(5,:); Eig_12_l(6,:).*E_tr_l(5,:)
-        Eig_12_l(1,:).*E_tr_l(6,:); Eig_12_l(2,:).*E_tr_l(6,:); Eig_12_l(3,:).*E_tr_l(6,:); Eig_12_l(4,:).*E_tr_l(6,:); Eig_12_l(5,:).*E_tr_l(6,:); Eig_12_l(6,:).*E_tr_l(6,:) ];
-    Etr_x_E12 = ...
-        [ E_tr_l(1,:).*Eig_12_l(1,:); E_tr_l(2,:).*Eig_12_l(1,:); E_tr_l(3,:).*Eig_12_l(1,:); E_tr_l(4,:).*Eig_12_l(1,:); E_tr_l(5,:).*Eig_12_l(1,:); E_tr_l(6,:).*Eig_12_l(1,:)
-        E_tr_l(1,:).*Eig_12_l(2,:); E_tr_l(2,:).*Eig_12_l(2,:); E_tr_l(3,:).*Eig_12_l(2,:); E_tr_l(4,:).*Eig_12_l(2,:); E_tr_l(5,:).*Eig_12_l(2,:); E_tr_l(6,:).*Eig_12_l(2,:)
-        E_tr_l(1,:).*Eig_12_l(3,:); E_tr_l(2,:).*Eig_12_l(3,:); E_tr_l(3,:).*Eig_12_l(3,:); E_tr_l(4,:).*Eig_12_l(3,:); E_tr_l(5,:).*Eig_12_l(3,:); E_tr_l(6,:).*Eig_12_l(3,:)
-        E_tr_l(1,:).*Eig_12_l(4,:); E_tr_l(2,:).*Eig_12_l(4,:); E_tr_l(3,:).*Eig_12_l(4,:); E_tr_l(4,:).*Eig_12_l(4,:); E_tr_l(5,:).*Eig_12_l(4,:); E_tr_l(6,:).*Eig_12_l(4,:)
-        E_tr_l(1,:).*Eig_12_l(5,:); E_tr_l(2,:).*Eig_12_l(5,:); E_tr_l(3,:).*Eig_12_l(5,:); E_tr_l(4,:).*Eig_12_l(5,:); E_tr_l(5,:).*Eig_12_l(5,:); E_tr_l(6,:).*Eig_12_l(5,:)
-        E_tr_l(1,:).*Eig_12_l(6,:); E_tr_l(2,:).*Eig_12_l(6,:); E_tr_l(3,:).*Eig_12_l(6,:); E_tr_l(4,:).*Eig_12_l(6,:); E_tr_l(5,:).*Eig_12_l(6,:); E_tr_l(6,:).*Eig_12_l(6,:) ];
-    E12_x_E3 = ...
-        [ Eig_12_l(1,:).*Eig_3_l(1,:); Eig_12_l(2,:).*Eig_3_l(1,:); Eig_12_l(3,:).*Eig_3_l(1,:); Eig_12_l(4,:).*Eig_3_l(1,:); Eig_12_l(5,:).*Eig_3_l(1,:); Eig_12_l(6,:).*Eig_3_l(1,:)
-        Eig_12_l(1,:).*Eig_3_l(2,:); Eig_12_l(2,:).*Eig_3_l(2,:); Eig_12_l(3,:).*Eig_3_l(2,:); Eig_12_l(4,:).*Eig_3_l(2,:); Eig_12_l(5,:).*Eig_3_l(2,:); Eig_12_l(6,:).*Eig_3_l(2,:)
-        Eig_12_l(1,:).*Eig_3_l(3,:); Eig_12_l(2,:).*Eig_3_l(3,:); Eig_12_l(3,:).*Eig_3_l(3,:); Eig_12_l(4,:).*Eig_3_l(3,:); Eig_12_l(5,:).*Eig_3_l(3,:); Eig_12_l(6,:).*Eig_3_l(3,:)
-        Eig_12_l(1,:).*Eig_3_l(4,:); Eig_12_l(2,:).*Eig_3_l(4,:); Eig_12_l(3,:).*Eig_3_l(4,:); Eig_12_l(4,:).*Eig_3_l(4,:); Eig_12_l(5,:).*Eig_3_l(4,:); Eig_12_l(6,:).*Eig_3_l(4,:)
-        Eig_12_l(1,:).*Eig_3_l(5,:); Eig_12_l(2,:).*Eig_3_l(5,:); Eig_12_l(3,:).*Eig_3_l(5,:); Eig_12_l(4,:).*Eig_3_l(5,:); Eig_12_l(5,:).*Eig_3_l(5,:); Eig_12_l(6,:).*Eig_3_l(5,:)
-        Eig_12_l(1,:).*Eig_3_l(6,:); Eig_12_l(2,:).*Eig_3_l(6,:); Eig_12_l(3,:).*Eig_3_l(6,:); Eig_12_l(4,:).*Eig_3_l(6,:); Eig_12_l(5,:).*Eig_3_l(6,:); Eig_12_l(6,:).*Eig_3_l(6,:) ];
-    E3_x_E12 = ...
-        [ Eig_3_l(1,:).*Eig_12_l(1,:); Eig_3_l(2,:).*Eig_12_l(1,:); Eig_3_l(3,:).*Eig_12_l(1,:); Eig_3_l(4,:).*Eig_12_l(1,:); Eig_3_l(5,:).*Eig_12_l(1,:); Eig_3_l(6,:).*Eig_12_l(1,:)
-        Eig_3_l(1,:).*Eig_12_l(2,:); Eig_3_l(2,:).*Eig_12_l(2,:); Eig_3_l(3,:).*Eig_12_l(2,:); Eig_3_l(4,:).*Eig_12_l(2,:); Eig_3_l(5,:).*Eig_12_l(2,:); Eig_3_l(6,:).*Eig_12_l(2,:)
-        Eig_3_l(1,:).*Eig_12_l(3,:); Eig_3_l(2,:).*Eig_12_l(3,:); Eig_3_l(3,:).*Eig_12_l(3,:); Eig_3_l(4,:).*Eig_12_l(3,:); Eig_3_l(5,:).*Eig_12_l(3,:); Eig_3_l(6,:).*Eig_12_l(3,:)
-        Eig_3_l(1,:).*Eig_12_l(4,:); Eig_3_l(2,:).*Eig_12_l(4,:); Eig_3_l(3,:).*Eig_12_l(4,:); Eig_3_l(4,:).*Eig_12_l(4,:); Eig_3_l(5,:).*Eig_12_l(4,:); Eig_3_l(6,:).*Eig_12_l(4,:)
-        Eig_3_l(1,:).*Eig_12_l(5,:); Eig_3_l(2,:).*Eig_12_l(5,:); Eig_3_l(3,:).*Eig_12_l(5,:); Eig_3_l(4,:).*Eig_12_l(5,:); Eig_3_l(5,:).*Eig_12_l(5,:); Eig_3_l(6,:).*Eig_12_l(5,:)
-        Eig_3_l(1,:).*Eig_12_l(6,:); Eig_3_l(2,:).*Eig_12_l(6,:); Eig_3_l(3,:).*Eig_12_l(6,:); Eig_3_l(4,:).*Eig_12_l(6,:); Eig_3_l(5,:).*Eig_12_l(6,:); Eig_3_l(6,:).*Eig_12_l(6,:) ];
-    % derivative of the third eigenprojections (36*n_int)
-    EIG_3_l = (ones(36,1)*(1./denom_l3)).*( ...
-        DER_E_square(:,test_l)- ...
-        IDENT(:)*(eig_1_l+eig_2_l) - ...
-        (Etr_x_E12 + E12_x_Etr) + ...
-        (ones(36,1)*(eig_1_l+eig_2_l)).*E12_x_E12 + ...
-        (ones(36,1)*(eig_1_l+eig_2_l-2*eig_3_l)).*E3_x_E3 +...
-        (ones(36,1)*(eig_3_l)).*(E12_x_E3 + E3_x_E12) ...
-        );
-    % computation of the consistent tangent operators (36*n_int)
-    Sder1_l=(ones(36,1)*(sigma_3_l-sigma_1_l)).*EIG_3_l;
-    Sder2_l=VOL(:)*lame_l;
-    Sder3_l=repmat(shear_l,36,1).*( E12_x_E12 + 2*E3_x_E3 );
-    D_phi_l=repmat(shear_l,6,1).*(repmat(1+sin_phi_l,6,1).*Eig_12_l-2*repmat(1-sin_phi_l,6,1).*Eig_3_l)...
-        +2*iota*(lame_l.*sin_phi_l);
-    D_psi_l=repmat(shear_l,6,1).*(repmat(1+sin_psi_l,6,1).*Eig_12_l-2*repmat(1-sin_psi_l,6,1).*Eig_3_l)...
-        +2*iota*(lame_l.*sin_psi_l);
-    Sder4_l = ...
-        [ D_psi_l(1,:).*D_phi_l(1,:); D_psi_l(2,:).*D_phi_l(1,:); D_psi_l(3,:).*D_phi_l(1,:); D_psi_l(4,:).*D_phi_l(1,:); D_psi_l(5,:).*D_phi_l(1,:); D_psi_l(6,:).*D_phi_l(1,:)
-        D_psi_l(1,:).*D_phi_l(2,:); D_psi_l(2,:).*D_phi_l(2,:); D_psi_l(3,:).*D_phi_l(2,:); D_psi_l(4,:).*D_phi_l(2,:); D_psi_l(5,:).*D_phi_l(2,:); D_psi_l(6,:).*D_phi_l(2,:)
-        D_psi_l(1,:).*D_phi_l(3,:); D_psi_l(2,:).*D_phi_l(3,:); D_psi_l(3,:).*D_phi_l(3,:); D_psi_l(4,:).*D_phi_l(3,:); D_psi_l(5,:).*D_phi_l(3,:); D_psi_l(6,:).*D_phi_l(3,:)
-        D_psi_l(1,:).*D_phi_l(4,:); D_psi_l(2,:).*D_phi_l(4,:); D_psi_l(3,:).*D_phi_l(4,:); D_psi_l(4,:).*D_phi_l(4,:); D_psi_l(5,:).*D_phi_l(4,:); D_psi_l(6,:).*D_phi_l(4,:)
-        D_psi_l(1,:).*D_phi_l(5,:); D_psi_l(2,:).*D_phi_l(5,:); D_psi_l(3,:).*D_phi_l(5,:); D_psi_l(4,:).*D_phi_l(5,:); D_psi_l(5,:).*D_phi_l(5,:); D_psi_l(6,:).*D_phi_l(5,:)
-        D_psi_l(1,:).*D_phi_l(6,:); D_psi_l(2,:).*D_phi_l(6,:); D_psi_l(3,:).*D_phi_l(6,:); D_psi_l(4,:).*D_phi_l(6,:); D_psi_l(5,:).*D_phi_l(6,:); D_psi_l(6,:).*D_phi_l(6,:) ]./repmat(denom_l(test_l),36,1);
-    DS(:,test_l)=Sder1_l+Sder2_l+Sder3_l-Sder4_l;
+  E3_x_E3 = column_outer(Eig_3,Eig_3);
+  E12_x_E12 = column_outer(Eig_12,Eig_12);
+  E12_x_Etr = column_outer(Eig_12,E_tr);
+  Etr_x_E12 = column_outer(E_tr,Eig_12);
+  E12_x_E3 = column_outer(Eig_12,Eig_3);
+  E3_x_E12 = column_outer(Eig_3,Eig_12);
 
-    % return to the right edge of the yield surface
-    % auxilliary arrays (36*n_int)
-    E1_x_E1 = ...
-        [ Eig_1_r(1,:).*Eig_1_r(1,:); Eig_1_r(2,:).*Eig_1_r(1,:); Eig_1_r(3,:).*Eig_1_r(1,:); Eig_1_r(4,:).*Eig_1_r(1,:); Eig_1_r(5,:).*Eig_1_r(1,:); Eig_1_r(6,:).*Eig_1_r(1,:)
-        Eig_1_r(1,:).*Eig_1_r(2,:); Eig_1_r(2,:).*Eig_1_r(2,:); Eig_1_r(3,:).*Eig_1_r(2,:); Eig_1_r(4,:).*Eig_1_r(2,:); Eig_1_r(5,:).*Eig_1_r(2,:); Eig_1_r(6,:).*Eig_1_r(2,:)
-        Eig_1_r(1,:).*Eig_1_r(3,:); Eig_1_r(2,:).*Eig_1_r(3,:); Eig_1_r(3,:).*Eig_1_r(3,:); Eig_1_r(4,:).*Eig_1_r(3,:); Eig_1_r(5,:).*Eig_1_r(3,:); Eig_1_r(6,:).*Eig_1_r(3,:)
-        Eig_1_r(1,:).*Eig_1_r(4,:); Eig_1_r(2,:).*Eig_1_r(4,:); Eig_1_r(3,:).*Eig_1_r(4,:); Eig_1_r(4,:).*Eig_1_r(4,:); Eig_1_r(5,:).*Eig_1_r(4,:); Eig_1_r(6,:).*Eig_1_r(4,:)
-        Eig_1_r(1,:).*Eig_1_r(5,:); Eig_1_r(2,:).*Eig_1_r(5,:); Eig_1_r(3,:).*Eig_1_r(5,:); Eig_1_r(4,:).*Eig_1_r(5,:); Eig_1_r(5,:).*Eig_1_r(5,:); Eig_1_r(6,:).*Eig_1_r(5,:)
-        Eig_1_r(1,:).*Eig_1_r(6,:); Eig_1_r(2,:).*Eig_1_r(6,:); Eig_1_r(3,:).*Eig_1_r(6,:); Eig_1_r(4,:).*Eig_1_r(6,:); Eig_1_r(5,:).*Eig_1_r(6,:); Eig_1_r(6,:).*Eig_1_r(6,:) ];
-    E23_x_E23 = ...
-        [ Eig_23_r(1,:).*Eig_23_r(1,:); Eig_23_r(2,:).*Eig_23_r(1,:); Eig_23_r(3,:).*Eig_23_r(1,:); Eig_23_r(4,:).*Eig_23_r(1,:); Eig_23_r(5,:).*Eig_23_r(1,:); Eig_23_r(6,:).*Eig_23_r(1,:)
-        Eig_23_r(1,:).*Eig_23_r(2,:); Eig_23_r(2,:).*Eig_23_r(2,:); Eig_23_r(3,:).*Eig_23_r(2,:); Eig_23_r(4,:).*Eig_23_r(2,:); Eig_23_r(5,:).*Eig_23_r(2,:); Eig_23_r(6,:).*Eig_23_r(2,:)
-        Eig_23_r(1,:).*Eig_23_r(3,:); Eig_23_r(2,:).*Eig_23_r(3,:); Eig_23_r(3,:).*Eig_23_r(3,:); Eig_23_r(4,:).*Eig_23_r(3,:); Eig_23_r(5,:).*Eig_23_r(3,:); Eig_23_r(6,:).*Eig_23_r(3,:)
-        Eig_23_r(1,:).*Eig_23_r(4,:); Eig_23_r(2,:).*Eig_23_r(4,:); Eig_23_r(3,:).*Eig_23_r(4,:); Eig_23_r(4,:).*Eig_23_r(4,:); Eig_23_r(5,:).*Eig_23_r(4,:); Eig_23_r(6,:).*Eig_23_r(4,:)
-        Eig_23_r(1,:).*Eig_23_r(5,:); Eig_23_r(2,:).*Eig_23_r(5,:); Eig_23_r(3,:).*Eig_23_r(5,:); Eig_23_r(4,:).*Eig_23_r(5,:); Eig_23_r(5,:).*Eig_23_r(5,:); Eig_23_r(6,:).*Eig_23_r(5,:)
-        Eig_23_r(1,:).*Eig_23_r(6,:); Eig_23_r(2,:).*Eig_23_r(6,:); Eig_23_r(3,:).*Eig_23_r(6,:); Eig_23_r(4,:).*Eig_23_r(6,:); Eig_23_r(5,:).*Eig_23_r(6,:); Eig_23_r(6,:).*Eig_23_r(6,:) ];
-    E_tr_r = E_tr(:,test_r) ;
-    E23_x_Etr = ...
-        [ Eig_23_r(1,:).*E_tr_r(1,:); Eig_23_r(2,:).*E_tr_r(1,:); Eig_23_r(3,:).*E_tr_r(1,:); Eig_23_r(4,:).*E_tr_r(1,:); Eig_23_r(5,:).*E_tr_r(1,:); Eig_23_r(6,:).*E_tr_r(1,:)
-        Eig_23_r(1,:).*E_tr_r(2,:); Eig_23_r(2,:).*E_tr_r(2,:); Eig_23_r(3,:).*E_tr_r(2,:); Eig_23_r(4,:).*E_tr_r(2,:); Eig_23_r(5,:).*E_tr_r(2,:); Eig_23_r(6,:).*E_tr_r(2,:)
-        Eig_23_r(1,:).*E_tr_r(3,:); Eig_23_r(2,:).*E_tr_r(3,:); Eig_23_r(3,:).*E_tr_r(3,:); Eig_23_r(4,:).*E_tr_r(3,:); Eig_23_r(5,:).*E_tr_r(3,:); Eig_23_r(6,:).*E_tr_r(3,:)
-        Eig_23_r(1,:).*E_tr_r(4,:); Eig_23_r(2,:).*E_tr_r(4,:); Eig_23_r(3,:).*E_tr_r(4,:); Eig_23_r(4,:).*E_tr_r(4,:); Eig_23_r(5,:).*E_tr_r(4,:); Eig_23_r(6,:).*E_tr_r(4,:)
-        Eig_23_r(1,:).*E_tr_r(5,:); Eig_23_r(2,:).*E_tr_r(5,:); Eig_23_r(3,:).*E_tr_r(5,:); Eig_23_r(4,:).*E_tr_r(5,:); Eig_23_r(5,:).*E_tr_r(5,:); Eig_23_r(6,:).*E_tr_r(5,:)
-        Eig_23_r(1,:).*E_tr_r(6,:); Eig_23_r(2,:).*E_tr_r(6,:); Eig_23_r(3,:).*E_tr_r(6,:); Eig_23_r(4,:).*E_tr_r(6,:); Eig_23_r(5,:).*E_tr_r(6,:); Eig_23_r(6,:).*E_tr_r(6,:) ];
-    Etr_x_E23 = ...
-        [ E_tr_r(1,:).*Eig_23_r(1,:); E_tr_r(2,:).*Eig_23_r(1,:); E_tr_r(3,:).*Eig_23_r(1,:); E_tr_r(4,:).*Eig_23_r(1,:); E_tr_r(5,:).*Eig_23_r(1,:); E_tr_r(6,:).*Eig_23_r(1,:)
-        E_tr_r(1,:).*Eig_23_r(2,:); E_tr_r(2,:).*Eig_23_r(2,:); E_tr_r(3,:).*Eig_23_r(2,:); E_tr_r(4,:).*Eig_23_r(2,:); E_tr_r(5,:).*Eig_23_r(2,:); E_tr_r(6,:).*Eig_23_r(2,:)
-        E_tr_r(1,:).*Eig_23_r(3,:); E_tr_r(2,:).*Eig_23_r(3,:); E_tr_r(3,:).*Eig_23_r(3,:); E_tr_r(4,:).*Eig_23_r(3,:); E_tr_r(5,:).*Eig_23_r(3,:); E_tr_r(6,:).*Eig_23_r(3,:)
-        E_tr_r(1,:).*Eig_23_r(4,:); E_tr_r(2,:).*Eig_23_r(4,:); E_tr_r(3,:).*Eig_23_r(4,:); E_tr_r(4,:).*Eig_23_r(4,:); E_tr_r(5,:).*Eig_23_r(4,:); E_tr_r(6,:).*Eig_23_r(4,:)
-        E_tr_r(1,:).*Eig_23_r(5,:); E_tr_r(2,:).*Eig_23_r(5,:); E_tr_r(3,:).*Eig_23_r(5,:); E_tr_r(4,:).*Eig_23_r(5,:); E_tr_r(5,:).*Eig_23_r(5,:); E_tr_r(6,:).*Eig_23_r(5,:)
-        E_tr_r(1,:).*Eig_23_r(6,:); E_tr_r(2,:).*Eig_23_r(6,:); E_tr_r(3,:).*Eig_23_r(6,:); E_tr_r(4,:).*Eig_23_r(6,:); E_tr_r(5,:).*Eig_23_r(6,:); E_tr_r(6,:).*Eig_23_r(6,:) ];
-    E23_x_E1 = ...
-        [ Eig_23_r(1,:).*Eig_1_r(1,:); Eig_23_r(2,:).*Eig_1_r(1,:); Eig_23_r(3,:).*Eig_1_r(1,:); Eig_23_r(4,:).*Eig_1_r(1,:); Eig_23_r(5,:).*Eig_1_r(1,:); Eig_23_r(6,:).*Eig_1_r(1,:)
-        Eig_23_r(1,:).*Eig_1_r(2,:); Eig_23_r(2,:).*Eig_1_r(2,:); Eig_23_r(3,:).*Eig_1_r(2,:); Eig_23_r(4,:).*Eig_1_r(2,:); Eig_23_r(5,:).*Eig_1_r(2,:); Eig_23_r(6,:).*Eig_1_r(2,:)
-        Eig_23_r(1,:).*Eig_1_r(3,:); Eig_23_r(2,:).*Eig_1_r(3,:); Eig_23_r(3,:).*Eig_1_r(3,:); Eig_23_r(4,:).*Eig_1_r(3,:); Eig_23_r(5,:).*Eig_1_r(3,:); Eig_23_r(6,:).*Eig_1_r(3,:)
-        Eig_23_r(1,:).*Eig_1_r(4,:); Eig_23_r(2,:).*Eig_1_r(4,:); Eig_23_r(3,:).*Eig_1_r(4,:); Eig_23_r(4,:).*Eig_1_r(4,:); Eig_23_r(5,:).*Eig_1_r(4,:); Eig_23_r(6,:).*Eig_1_r(4,:)
-        Eig_23_r(1,:).*Eig_1_r(5,:); Eig_23_r(2,:).*Eig_1_r(5,:); Eig_23_r(3,:).*Eig_1_r(5,:); Eig_23_r(4,:).*Eig_1_r(5,:); Eig_23_r(5,:).*Eig_1_r(5,:); Eig_23_r(6,:).*Eig_1_r(5,:)
-        Eig_23_r(1,:).*Eig_1_r(6,:); Eig_23_r(2,:).*Eig_1_r(6,:); Eig_23_r(3,:).*Eig_1_r(6,:); Eig_23_r(4,:).*Eig_1_r(6,:); Eig_23_r(5,:).*Eig_1_r(6,:); Eig_23_r(6,:).*Eig_1_r(6,:) ];
-    E1_x_E23 = ...
-        [ Eig_1_r(1,:).*Eig_23_r(1,:); Eig_1_r(2,:).*Eig_23_r(1,:); Eig_1_r(3,:).*Eig_23_r(1,:); Eig_1_r(4,:).*Eig_23_r(1,:); Eig_1_r(5,:).*Eig_23_r(1,:); Eig_1_r(6,:).*Eig_23_r(1,:)
-        Eig_1_r(1,:).*Eig_23_r(2,:); Eig_1_r(2,:).*Eig_23_r(2,:); Eig_1_r(3,:).*Eig_23_r(2,:); Eig_1_r(4,:).*Eig_23_r(2,:); Eig_1_r(5,:).*Eig_23_r(2,:); Eig_1_r(6,:).*Eig_23_r(2,:)
-        Eig_1_r(1,:).*Eig_23_r(3,:); Eig_1_r(2,:).*Eig_23_r(3,:); Eig_1_r(3,:).*Eig_23_r(3,:); Eig_1_r(4,:).*Eig_23_r(3,:); Eig_1_r(5,:).*Eig_23_r(3,:); Eig_1_r(6,:).*Eig_23_r(3,:)
-        Eig_1_r(1,:).*Eig_23_r(4,:); Eig_1_r(2,:).*Eig_23_r(4,:); Eig_1_r(3,:).*Eig_23_r(4,:); Eig_1_r(4,:).*Eig_23_r(4,:); Eig_1_r(5,:).*Eig_23_r(4,:); Eig_1_r(6,:).*Eig_23_r(4,:)
-        Eig_1_r(1,:).*Eig_23_r(5,:); Eig_1_r(2,:).*Eig_23_r(5,:); Eig_1_r(3,:).*Eig_23_r(5,:); Eig_1_r(4,:).*Eig_23_r(5,:); Eig_1_r(5,:).*Eig_23_r(5,:); Eig_1_r(6,:).*Eig_23_r(5,:)
-        Eig_1_r(1,:).*Eig_23_r(6,:); Eig_1_r(2,:).*Eig_23_r(6,:); Eig_1_r(3,:).*Eig_23_r(6,:); Eig_1_r(4,:).*Eig_23_r(6,:); Eig_1_r(5,:).*Eig_23_r(6,:); Eig_1_r(6,:).*Eig_23_r(6,:) ];
-    % derivative of the first eigenprojections (36*n_int)
-    EIG_1_r = (ones(36,1)*(1./denom_r1)).*( DER_E_square(:,test_r) - ...
-        IDENT(:)*(eig_2_r+eig_3_r) - ...
-        Etr_x_E23 - E23_x_Etr + (ones(36,1)*(eig_2_r+eig_3_r)).*E23_x_E23 + ...
-        (ones(36,1)*(eig_2_r+eig_3_r-2*eig_1_r)).*E1_x_E1 + ...
-        (ones(36,1)*(eig_1_r)).*(E23_x_E1 + E1_x_E23) );
-    % computation of the consistent tangent operators (36*n_int)
-    Sder1_r=(ones(36,1)*(sigma_1_r-sigma_3_r)).*EIG_1_r;
-    Sder2_r=VOL(:)*lame_r;
-    Sder3_r=repmat(shear_r,36,1).*( 2*E1_x_E1 + E23_x_E23 );
-    D_phi_r=repmat(shear_r,6,1).*(2*repmat(1+sin_phi_r,6,1).*Eig_1_r-repmat(1-sin_phi_r,6,1).*Eig_23_r)...
-        +2*iota*(lame_r.*sin_phi_r);
-    D_psi_r=repmat(shear_r,6,1).*(2*repmat(1+sin_psi_r,6,1).*Eig_1_r-repmat(1-sin_psi_r,6,1).*Eig_23_r)...
-        +2*iota*(lame_r.*sin_psi_r);
-    Sder4_r = ...
-        [ D_psi_r(1,:).*D_phi_r(1,:); D_psi_r(2,:).*D_phi_r(1,:); D_psi_r(3,:).*D_phi_r(1,:); D_psi_r(4,:).*D_phi_r(1,:); D_psi_r(5,:).*D_phi_r(1,:); D_psi_r(6,:).*D_phi_r(1,:)
-        D_psi_r(1,:).*D_phi_r(2,:); D_psi_r(2,:).*D_phi_r(2,:); D_psi_r(3,:).*D_phi_r(2,:); D_psi_r(4,:).*D_phi_r(2,:); D_psi_r(5,:).*D_phi_r(2,:); D_psi_r(6,:).*D_phi_r(2,:)
-        D_psi_r(1,:).*D_phi_r(3,:); D_psi_r(2,:).*D_phi_r(3,:); D_psi_r(3,:).*D_phi_r(3,:); D_psi_r(4,:).*D_phi_r(3,:); D_psi_r(5,:).*D_phi_r(3,:); D_psi_r(6,:).*D_phi_r(3,:)
-        D_psi_r(1,:).*D_phi_r(4,:); D_psi_r(2,:).*D_phi_r(4,:); D_psi_r(3,:).*D_phi_r(4,:); D_psi_r(4,:).*D_phi_r(4,:); D_psi_r(5,:).*D_phi_r(4,:); D_psi_r(6,:).*D_phi_r(4,:)
-        D_psi_r(1,:).*D_phi_r(5,:); D_psi_r(2,:).*D_phi_r(5,:); D_psi_r(3,:).*D_phi_r(5,:); D_psi_r(4,:).*D_phi_r(5,:); D_psi_r(5,:).*D_phi_r(5,:); D_psi_r(6,:).*D_phi_r(5,:)
-        D_psi_r(1,:).*D_phi_r(6,:); D_psi_r(2,:).*D_phi_r(6,:); D_psi_r(3,:).*D_phi_r(6,:); D_psi_r(4,:).*D_phi_r(6,:); D_psi_r(5,:).*D_phi_r(6,:); D_psi_r(6,:).*D_phi_r(6,:) ]./repmat(denom_r(test_r),36,1);
-    DS(:,test_r)=Sder1_r+Sder2_r+Sder3_r-Sder4_r;
+  EIG_3 = (ones(36,1)*(1./denom_3)).*(DER_E_square-...
+          IDENT(:)*(eig_1+eig_2)-(Etr_x_E12+E12_x_Etr)+...
+          (ones(36,1)*(eig_1+eig_2)).*E12_x_E12+...
+          (ones(36,1)*(eig_1+eig_2-2*eig_3)).*E3_x_E3+...
+          (ones(36,1)*eig_3).*(E12_x_E3+E3_x_E12));
 
-    % return to the apex
-    DS(:,test_a)=zeros(36,nt_a);
+end
 
-end % (if nargout)
+function EIG_1 = eigenprojection_derivative_right( ...
+  DER_E_square,IDENT,E_tr,Eig_1,Eig_23,eig_1,eig_2,eig_3,denom_1)
 
-eps_el = zeros(size(S));
-eps_el(1,:) = (S(1,:) - poisson*(S(2,:) + S(3,:))) / young;
-eps_el(2,:) = (S(2,:) - poisson*(S(1,:) + S(3,:))) / young;
-eps_el(3,:) = (S(3,:) - poisson*(S(1,:) + S(2,:))) / young;
-eps_el(4,:) = S(4,:) / shear0;
-eps_el(5,:) = S(5,:) / shear0;
-eps_el(6,:) = S(6,:) / shear0;
-Ep = E_new - eps_el;
+  E1_x_E1 = column_outer(Eig_1,Eig_1);
+  E23_x_E23 = column_outer(Eig_23,Eig_23);
+  E23_x_Etr = column_outer(Eig_23,E_tr);
+  Etr_x_E23 = column_outer(E_tr,Eig_23);
+  E23_x_E1 = column_outer(Eig_23,Eig_1);
+  E1_x_E23 = column_outer(Eig_1,Eig_23);
 
-end % (function)
+  EIG_1 = (ones(36,1)*(1./denom_1)).*(DER_E_square-...
+          IDENT(:)*(eig_2+eig_3)-(Etr_x_E23+E23_x_Etr)+...
+          (ones(36,1)*(eig_2+eig_3)).*E23_x_E23+...
+          (ones(36,1)*(eig_2+eig_3-2*eig_1)).*E1_x_E1+...
+          (ones(36,1)*eig_1).*(E23_x_E1+E1_x_E23));
+
+end
+
+function M = column_outer(A,B)
+
+  M = reshape(reshape(A,6,1,[]).*reshape(B,1,6,[]),36,[]);
+
+end

@@ -102,7 +102,7 @@ The scalar branch catalog can still be checked explicitly with
 ## MC Surface Coverage
 
 The default full-path matching dataset covers every return branch implemented in
-the Tomas/Sysala 3D Mohr-Coulomb algorithm:
+the 3D Mohr-Coulomb algorithm used by this repository:
 
 | Return type | MC region | Integration points |
 | ---: | --- | ---: |

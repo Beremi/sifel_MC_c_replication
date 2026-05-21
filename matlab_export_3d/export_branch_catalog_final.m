@@ -10,6 +10,7 @@ function export_branch_catalog_final(outdir)
 
   global young poisson cohesion phi
   global shear bulk lame c_bar sin_phi
+  global nt Inv_ELAST
   input_data;
 
   E_final = [
@@ -24,8 +25,16 @@ function export_branch_catalog_final(outdir)
 
   E_upstream = sifel_to_upstream_rows(E_final);
   Ep_prev_upstream = sifel_to_upstream_rows(Ep_prev);
-  [S_upstream, DS_upstream, return_type, Ep_final_upstream, eig_values, sigma_values] = ...
+  nt = size(E_upstream, 2);
+  [S_upstream,eig_1,eig_2,eig_3,Eig_1,Eig_2,Eig_3,EIG_1,EIG_2,EIG_3,...
+    sigma_1,sigma_2,sigma_3,return_type] = ...
     constitutive_problem(E_upstream, Ep_prev_upstream);
+  DS_upstream = stiffness_matrix(eig_1,eig_2,eig_3,Eig_1,Eig_2,Eig_3,...
+                                 EIG_1,EIG_2,EIG_3,sigma_1,sigma_2,sigma_3);
+  Ep_final_upstream = -Inv_ELAST*S_upstream;
+  Ep_final_upstream(1:6,:)=Ep_final_upstream(1:6,:)+E_upstream;
+  eig_values = [eig_1; eig_2; eig_3];
+  sigma_values = [sigma_1; sigma_2; sigma_3];
   S = upstream_to_sifel_rows(S_upstream);
   DS = upstream_to_sifel_tangent(DS_upstream);
   Ep_final = upstream_to_sifel_rows(Ep_final_upstream);

@@ -7,7 +7,7 @@
 
 function  input_data
 
-  global young poisson cohesion phi
+  global young poisson c cohesion phi
   global shear bulk lame       % elastic material parameters
   global c_bar sin_phi         % inelastic material parameters
   global specific_weight       % specific weight
@@ -33,7 +33,8 @@ function  input_data
   poisson = 0.49;                   % Poisson's ratio
 
 % inelastic material parameters
-  cohesion = 50;                    % cohesion
+  c = 50;                           % cohesion
+  cohesion = c;                     % export metadata name
   phi = pi/9;                       % frictional angle
 
 % external forces - gravity load

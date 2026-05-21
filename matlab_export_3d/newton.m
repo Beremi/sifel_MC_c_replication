@@ -15,6 +15,7 @@ function [U,        ... % 3*nv displacement vector
                     )
 
   global  volume EU Dir nt nv iMALI jMALI K_elast
+  global  Inv_ELAST
   global  tolerance it_max settle_max     % parameters of the Newton method
 %
 %==========================================================================
@@ -27,8 +28,10 @@ function [U,        ... % 3*nv displacement vector
   U = U_init;        % displacement vector
   E = zeros(6,nt);
   E(:) = EU*U(:);   % strain on elements
-  [S,DS,return_type,Ep,eig_values,sigma_values] = constitutive_problem(E,Ep_init);
-  Sderiv = stiffness_matrix(DS);
+  [S,eig_1,eig_2,eig_3,Eig_1,Eig_2,Eig_3,EIG_1,EIG_2,EIG_3,...
+    sigma_1,sigma_2,sigma_3,return_type]=constitutive_problem(E,Ep_init);
+  Sderiv = stiffness_matrix(eig_1,eig_2,eig_3,Eig_1,Eig_2,Eig_3,...
+                            EIG_1,EIG_2,EIG_3,sigma_1,sigma_2,sigma_3);
   F_int = zeros(3,nv);  % vector of internal forces
   dU = zeros(3,nv);     % Newton's increment (in displacement)
 
@@ -68,8 +71,10 @@ function [U,        ... % 3*nv displacement vector
       % update of unknown arrays
       U=U_new;
       E(:) = EU*U(:);
-      [S,DS,return_type,Ep,eig_values,sigma_values] = constitutive_problem(E,Ep_init);
-      Sderiv = stiffness_matrix(DS);
+      [S,eig_1,eig_2,eig_3,Eig_1,Eig_2,Eig_3,EIG_1,EIG_2,EIG_3,...
+        sigma_1,sigma_2,sigma_3,return_type]=constitutive_problem(E,Ep_init);
+      Sderiv = stiffness_matrix(eig_1,eig_2,eig_3,Eig_1,Eig_2,Eig_3,...
+                                EIG_1,EIG_2,EIG_3,sigma_1,sigma_2,sigma_3);
 
       % test on the stopping criterion
       if  criterion < tolerance
@@ -86,16 +91,19 @@ function [U,        ... % 3*nv displacement vector
 
   iter1=it;
 
+  Ep = -Inv_ELAST*S;
+  Ep(1:6,:)=Ep(1:6,:)+E;
+
   last_response = struct();
   last_response.E = E;
   last_response.S = S;
-  last_response.DS = DS;
+  last_response.DS = Sderiv;
   last_response.E_sifel = upstream_to_sifel_rows(E);
   last_response.S_sifel = upstream_to_sifel_rows(S);
-  last_response.DS_sifel = upstream_to_sifel_tangent(DS);
+  last_response.DS_sifel = upstream_to_sifel_tangent(Sderiv);
   last_response.return_type = return_type;
-  last_response.eig_values = eig_values;
-  last_response.sigma_values = sigma_values;
+  last_response.eig_values = [eig_1; eig_2; eig_3];
+  last_response.sigma_values = [sigma_1; sigma_2; sigma_3];
 
 end
 
